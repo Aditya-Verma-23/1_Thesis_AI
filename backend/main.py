@@ -20,7 +20,7 @@ from loguru import logger
 import session_store
 from models import QueryRequest, SearchResult, StreamEventType, SynthesisResult
 from search import search_papers
-from synthesizer import synthesize
+from synthesizer import synthesize, suggest_alternative_topics
 
 
 # ── App lifecycle ──────────────────────────────────────────────────────────────
@@ -75,8 +75,21 @@ async def query(req: QueryRequest):
             results: list[SearchResult] = await search_papers(req.query, req.sources, req.filters)
 
             if not results:
-                yield _sse(StreamEventType.STAGE, {"message": "⚠️ No results found. Try a different query."})
-                yield _sse(StreamEventType.DONE,  {"session_id": session_id})
+                err_msg = "> [!WARNING]\n> **No sources found.**\n> Please provide a more elaborate or specific query to search.\n\n"
+                
+                # Fetch alternative suggestions from the LLM
+                suggestions = await suggest_alternative_topics(req.query)
+                if suggestions:
+                    err_msg += "**Alternatively, try exploring one of these related topics:**\n\n"
+                    for s in suggestions:
+                        err_msg += f"- *{s}*\n"
+                
+                yield _sse(StreamEventType.TOKEN, {"content": err_msg})
+                # Save the empty state so it persists in chat history
+                await session_store.save(SynthesisResult(
+                    session_id = session_id, query = req.query, results = [], paper_text = err_msg
+                ))
+                yield _sse(StreamEventType.DONE, {"session_id": session_id})
                 return
 
             # Emit top-10 results immediately so UI can show them

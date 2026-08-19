@@ -8,3 +8,4 @@ loguru
 requests
 python-docx
 httpx
+beautifulsoup4

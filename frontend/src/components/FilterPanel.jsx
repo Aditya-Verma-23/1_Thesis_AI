@@ -44,7 +44,7 @@ function FilterPanel({ isOpen, onClose, sources, toggleSource, onFiltersChange }
 
   const qualPct = (journalQuality / (QUALITY_STEPS.length - 1)) * 100;
   const isPapersOn = sources.includes('papers');
-  const isWebOn    = sources.includes('web');
+  const isWebOn = sources.includes('web');
 
   return (
     <>
@@ -74,7 +74,7 @@ function FilterPanel({ isOpen, onClose, sources, toggleSource, onFiltersChange }
                 <input
                   type="range" className="fp-range" min="0" max="20" value={minCitations}
                   onChange={e => setMinCitations(Number(e.target.value))}
-                  style={{ background: `linear-gradient(to right, var(--maroon) 0%, var(--maroon) ${(minCitations/20)*100}%, #e8dde0 ${(minCitations/20)*100}%, #e8dde0 100%)` }}
+                  style={{ background: `linear-gradient(to right, var(--maroon) 0%, var(--maroon) ${(minCitations / 20) * 100}%, #e8dde0 ${(minCitations / 20) * 100}%, #e8dde0 100%)` }}
                 />
                 <div className="fp-range-bounds"><span>0</span><span>20</span></div>
               </div>
@@ -84,7 +84,7 @@ function FilterPanel({ isOpen, onClose, sources, toggleSource, onFiltersChange }
           {/* Journal Quality */}
           <div className="fp-section">
             <button className="fp-trigger" aria-expanded={expanded.quality} onClick={() => toggle('quality')}>
-              Journal quality <span style={{fontSize:'11px',color:'var(--ink-faint)',fontWeight:400,marginLeft:'4px'}}>ⓘ</span>
+              Journal quality <span style={{ fontSize: '11px', color: 'var(--ink-faint)', fontWeight: 400, marginLeft: '4px' }}>ⓘ</span>
               <span className="fp-chevron">▲</span>
             </button>
             <div className={`fp-content ${!expanded.quality ? 'collapsed' : ''}`}>
@@ -114,9 +114,9 @@ function FilterPanel({ isOpen, onClose, sources, toggleSource, onFiltersChange }
             <div className={`fp-content ${!expanded.pubTypes ? 'collapsed' : ''}`}>
               <p className="fp-hint">Select the types of publications to include in your search</p>
               <div className="fp-checkbox-list">
-                {[['journal','Journal Articles'],['review','Review Articles'],['conference','Conference Papers'],['preprint','Preprints'],['books','Books & Chapters']].map(([k, label]) => (
+                {[['journal', 'Journal Articles'], ['review', 'Review Articles'], ['conference', 'Conference Papers'], ['preprint', 'Preprints'], ['books', 'Books & Chapters']].map(([k, label]) => (
                   <label key={k} className="fp-cb-label">
-                    <input type="checkbox" checked={pubTypes[k]} onChange={e => setPubTypes(p => ({...p,[k]:e.target.checked}))} />
+                    <input type="checkbox" checked={pubTypes[k]} onChange={e => setPubTypes(p => ({ ...p, [k]: e.target.checked }))} />
                     <span className="fp-custom-cb" />{label}
                   </label>
                 ))}
@@ -143,9 +143,9 @@ function FilterPanel({ isOpen, onClose, sources, toggleSource, onFiltersChange }
               {isPapersOn && (
                 <div className="fp-internet-filter visible">
                   <div className="fp-checkbox-list">
-                    {[['semanticScholar','📚 Semantic Scholar'],['openAlex','🔬 OpenAlex'],['pubmed','🧬 PubMed'],['arxiv','📄 arXiv'],['clinicalTrials','🏥 ClinicalTrials.gov']].map(([k,label]) => (
+                    {[['semanticScholar', '📚 Semantic Scholar'], ['openAlex', '🔬 OpenAlex'], ['pubmed', '🧬 PubMed'], ['arxiv', '📄 arXiv'], ['clinicalTrials', '🏥 ClinicalTrials.gov']].map(([k, label]) => (
                       <label key={k} className="fp-cb-label">
-                        <input type="checkbox" checked={dbPapers[k]} onChange={e => setDbPapers(p => ({...p,[k]:e.target.checked}))} />
+                        <input type="checkbox" checked={dbPapers[k]} onChange={e => setDbPapers(p => ({ ...p, [k]: e.target.checked }))} />
                         <span className="fp-custom-cb" />{label}
                       </label>
                     ))}
@@ -166,7 +166,7 @@ function FilterPanel({ isOpen, onClose, sources, toggleSource, onFiltersChange }
                   <div className="fp-internet-filter visible">
                     <div className="fp-internet-filter-label">Internet Filter:</div>
                     <div className="fp-checkbox-list" style={{ padding: '10px 12px', background: '#f5f5f5', borderRadius: '8px' }}>
-                      {[['all','🌐 All websites'],['gov','🏛 .gov (Government)'],['edu','🎓 .edu (Education)']].map(([k,label]) => (
+                      {[['all', '🌐 All websites'], ['gov', '🏛 .gov (Government)'], ['edu', '🎓 .edu (Education)']].map(([k, label]) => (
                         <label key={k} className="fp-cb-label">
                           <input type="checkbox" checked={dbWeb[k]} onChange={() => handleWebFilter(k)} />
                           <span className="fp-custom-cb" />{label}
@@ -175,11 +175,11 @@ function FilterPanel({ isOpen, onClose, sources, toggleSource, onFiltersChange }
                     </div>
                   </div>
                 )}
-                {[['patents','Patents'],['medicare','Medicare Coverage'],['myLibrary','My Library']].map(([k,label]) => (
+                {[['patents', 'Patents'], ['medicare', 'Medicare Coverage'], ['myLibrary', 'My Library']].map(([k, label]) => (
                   <div key={k} className="fp-toggle-row">
                     <span className="fp-toggle-label">{label}</span>
                     <label className="fp-toggle-switch">
-                      <input type="checkbox" checked={dbMain[k]} onChange={e => setDbMain(p => ({...p,[k]:e.target.checked}))} />
+                      <input type="checkbox" checked={dbMain[k]} onChange={e => setDbMain(p => ({ ...p, [k]: e.target.checked }))} />
                       <span className="fp-toggle-track"><span className="fp-toggle-thumb" /></span>
                     </label>
                   </div>
@@ -197,11 +197,11 @@ function FilterPanel({ isOpen, onClose, sources, toggleSource, onFiltersChange }
               <div className="fp-date-group">
                 <div className="fp-date-field">
                   <label>Start Date:</label>
-                  <input type="date" className="fp-date-input" value={dates.start} onChange={e => setDates(p => ({...p, start: e.target.value}))} />
+                  <input type="date" className="fp-date-input" value={dates.start} onChange={e => setDates(p => ({ ...p, start: e.target.value }))} />
                 </div>
                 <div className="fp-date-field">
                   <label>End Date:</label>
-                  <input type="date" className="fp-date-input" value={dates.end} onChange={e => setDates(p => ({...p, end: e.target.value}))} />
+                  <input type="date" className="fp-date-input" value={dates.end} onChange={e => setDates(p => ({ ...p, end: e.target.value }))} />
                 </div>
               </div>
             </div>

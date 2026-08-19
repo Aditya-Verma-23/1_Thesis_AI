@@ -84,9 +84,16 @@ export default function App() {
   const [isBackendReady, setIsBackendReady] = useState(false);
   const [backendStatusMsg, setBackendStatusMsg] = useState('Connecting to backend…');
   const [sidebarSearch, setSidebarSearch] = useState('');
-  const [recentQueries, setRecentQueries] = useState(() =>
-    JSON.parse(localStorage.getItem('thesisai_recent') || '[]')
-  );
+  const [editingMessageIdx, setEditingMessageIdx] = useState(null);
+  const [editContent, setEditContent]             = useState('');
+  const [recentQueries, setRecentQueries] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('thesisai_recent') || '[]'); }
+    catch { return []; }
+  });
+  const [activeChat, setActiveChat] = useState(null); // text key of the currently open chat
+  const [editingChatKey, setEditingChatKey] = useState(null);
+  const [editingChatTitle, setEditingChatTitle] = useState('');
+  const [openMenuKey, setOpenMenuKey] = useState(null);
 
   const chatEndRef = useRef(null);
 
@@ -110,6 +117,13 @@ export default function App() {
     return () => clearTimeout(tid);
   }, []);
 
+  // Close options menu on outside click
+  useEffect(() => {
+    const handleClick = () => setOpenMenuKey(null);
+    window.addEventListener('click', handleClick);
+    return () => window.removeEventListener('click', handleClick);
+  }, []);
+
   // Auto-scroll
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -117,6 +131,12 @@ export default function App() {
 
   const toggleSource = (src) =>
     setSources(prev => prev.includes(src) ? prev.filter(s => s !== src) : [...prev, src]);
+
+  const submitEditedQuery = (text, index) => {
+    setMessages(prev => prev.slice(0, index));
+    setEditingMessageIdx(null);
+    setTimeout(() => submitQuery(text), 0);
+  };
 
   const submitQuery = useCallback(async (text) => {
     const q = text.trim();
@@ -133,10 +153,25 @@ export default function App() {
       { role: 'assistant', content: '', results: [], sessionId: null },
     ]);
 
-    // Save to recents
-    const newRecents = [{ text: q, time: timeStr() }, ...recentQueries.filter(r => r.text !== q)].slice(0, 10);
+    // Track this as the active chat
+    setActiveChat(q);
+
+    // Save to recents — messages will be updated once the query finishes
+    const newRecents = [
+      { text: q, time: timeStr(), messages: [] },
+      ...recentQueries.filter(r => r.text !== q)
+    ];
     setRecentQueries(newRecents);
     localStorage.setItem('thesisai_recent', JSON.stringify(newRecents));
+
+    // Helper: persist final messages into the matching recent entry
+    const persistMessages = (finalMessages) => {
+      setRecentQueries(prev => {
+        const updated = prev.map(r => r.text === q ? { ...r, messages: finalMessages } : r);
+        localStorage.setItem('thesisai_recent', JSON.stringify(updated));
+        return updated;
+      });
+    };
 
     try {
       const res = await fetch(`${BACKEND_URL}/api/query`, {
@@ -171,7 +206,13 @@ export default function App() {
             if (data.type === 'stage')  { setStage(data.message); }
             else if (data.type === 'result') { updateLast(p => ({ ...p, results: data.results || [] })); setStage(''); }
             else if (data.type === 'token')  { updateLast(p => ({ ...p, content: p.content + data.content })); }
-            else if (data.type === 'done')   { updateLast(p => ({ ...p, sessionId: data.session_id })); setStage(''); setIsLoading(false); }
+            else if (data.type === 'done') {
+              updateLast(p => ({ ...p, sessionId: data.session_id }));
+              setStage('');
+              setIsLoading(false);
+              // Persist finished messages into history
+              setMessages(prev => { persistMessages(prev); return prev; });
+            }
             else if (data.type === 'error')  { setStage(`Error: ${data.message}`); setIsLoading(false); }
           } catch { /* skip */ }
         }
@@ -190,7 +231,80 @@ export default function App() {
     if (sessionId) window.open(`${BACKEND_URL}/api/download/${sessionId}`, '_blank');
   };
 
-  const resetChat = () => { setChatStarted(false); setMessages([]); setStage(''); setQuery(''); };
+  const resetChat = () => { setChatStarted(false); setMessages([]); setStage(''); setQuery(''); setActiveChat(null); };
+
+  const deleteChat = (e, q) => {
+    e.stopPropagation();
+    if (!window.confirm("Are you sure you want to delete this chat?")) return;
+    
+    setRecentQueries(prev => {
+      const updated = prev.filter(r => r.text !== q);
+      localStorage.setItem('thesisai_recent', JSON.stringify(updated));
+      return updated;
+    });
+    
+    if (activeChat === q) {
+      resetChat();
+    }
+  };
+
+  const renameChat = (e, q) => {
+    e.stopPropagation();
+    const entry = recentQueries.find(r => r.text === q);
+    if (!entry) return;
+    setEditingChatKey(q);
+    setEditingChatTitle(entry.title || entry.text);
+  };
+
+  const saveChatTitle = (q) => {
+    if (editingChatTitle.trim()) {
+      setRecentQueries(prev => {
+        const updated = prev.map(r => r.text === q ? { ...r, title: editingChatTitle.trim() } : r);
+        localStorage.setItem('thesisai_recent', JSON.stringify(updated));
+        return updated;
+      });
+    }
+    setEditingChatKey(null);
+    setEditingChatTitle('');
+  };
+
+  const handleRenameKeyDown = (e, q) => {
+    if (e.key === 'Enter') saveChatTitle(q);
+    if (e.key === 'Escape') {
+      setEditingChatKey(null);
+      setEditingChatTitle('');
+    }
+  };
+
+  const togglePinChat = (e, q) => {
+    e.stopPropagation();
+    setRecentQueries(prev => {
+      const updated = prev.map(r => r.text === q ? { ...r, pinned: !r.pinned } : r);
+      localStorage.setItem('thesisai_recent', JSON.stringify(updated));
+      return updated;
+    });
+  };
+
+  const loadChat = (recentEntry) => {
+    // Always reset current chat first — never mix with existing messages
+    setChatStarted(false);
+    setMessages([]);
+    setStage('');
+    setQuery('');
+    setEditingMessageIdx(null);
+
+    if (recentEntry.messages && recentEntry.messages.length > 0) {
+      // Restore cached chat instantly — no backend call needed
+      setTimeout(() => {
+        setMessages(recentEntry.messages);
+        setChatStarted(true);
+        setActiveChat(recentEntry.text);
+      }, 0);
+    } else {
+      // No cache yet — submit as a fresh query (submitQuery sets activeChat itself)
+      setTimeout(() => submitQuery(recentEntry.text), 0);
+    }
+  };
 
   const cfg = TAB_CONFIG[activeTab];
 
@@ -259,14 +373,55 @@ export default function App() {
           />
         </div>
 
-        {recentQueries
-          .filter(r => r.text.toLowerCase().includes(sidebarSearch.toLowerCase()))
-          .slice(0, 6)
+        {[...recentQueries.filter(r => r.pinned), ...recentQueries.filter(r => !r.pinned)]
+          .filter(r => (r.title || r.text).toLowerCase().includes(sidebarSearch.toLowerCase()))
           .map((r, i) => (
-            <div key={i} className="recent-item" onClick={() => submitQuery(r.text)}>
-              <div>
-                <div className="recent-text">{r.text}</div>
+            <div
+              key={i}
+              className={`recent-item${r.text === activeChat ? ' active' : ''}`}
+              onClick={() => {
+                if (editingChatKey !== r.text) loadChat(r);
+              }}
+            >
+              <div className="recent-info">
+                {editingChatKey === r.text ? (
+                  <input
+                    autoFocus
+                    type="text"
+                    className="rename-input"
+                    value={editingChatTitle}
+                    onChange={(e) => setEditingChatTitle(e.target.value)}
+                    onBlur={() => saveChatTitle(r.text)}
+                    onKeyDown={(e) => handleRenameKeyDown(e, r.text)}
+                    onClick={(e) => e.stopPropagation()}
+                    style={{
+                      width: '100%', fontSize: '13.5px', color: 'var(--ink)',
+                      border: '1px solid var(--maroon)', borderRadius: '4px',
+                      padding: '2px 4px', outline: 'none', background: '#fff'
+                    }}
+                  />
+                ) : (
+                  <div className="recent-text" title={r.title || r.text}>
+                    {r.pinned && <span style={{ marginRight: 4 }}>📌</span>}
+                    {r.title || r.text}
+                  </div>
+                )}
                 <div className="recent-meta">{r.time}</div>
+              </div>
+              <div className="recent-actions" style={{ position: 'relative' }}>
+                {editingChatKey !== r.text && (
+                  <>
+                    <button className="action-btn" onClick={(e) => togglePinChat(e, r.text)} title={r.pinned ? "Unpin" : "Pin"}>{r.pinned ? '📍' : '📌'}</button>
+                    <button className="action-btn" onClick={(e) => { e.stopPropagation(); setOpenMenuKey(openMenuKey === r.text ? null : r.text); }} title="Options">⋮</button>
+                    
+                    {openMenuKey === r.text && (
+                      <div className="chat-options-menu" onClick={e => e.stopPropagation()}>
+                        <div className="chat-option" onClick={(e) => { setOpenMenuKey(null); renameChat(e, r.text); }}>✏️ Rename</div>
+                        <div className="chat-option delete" onClick={(e) => { setOpenMenuKey(null); deleteChat(e, r.text); }}>🗑️ Delete</div>
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
             </div>
           ))}
@@ -364,7 +519,28 @@ export default function App() {
                   <div key={idx}>
                     {msg.role === 'user' ? (
                       <div className="msg-row-user">
-                        <div className="msg-user">{msg.content}</div>
+                        {editingMessageIdx === idx ? (
+                          <div className="msg-user-edit">
+                            <textarea
+                              className="edit-textarea"
+                              value={editContent}
+                              onChange={e => setEditContent(e.target.value)}
+                              rows="3"
+                              autoFocus
+                            />
+                            <div className="edit-actions">
+                              <button className="edit-btn cancel" onClick={() => setEditingMessageIdx(null)}>Cancel</button>
+                              <button className="edit-btn save" onClick={() => submitEditedQuery(editContent, idx)}>Save & Submit</button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="msg-user-wrapper">
+                            <button className="edit-icon-btn" onClick={() => { setEditingMessageIdx(idx); setEditContent(msg.content); }} title="Edit query">
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
+                            </button>
+                            <div className="msg-user">{msg.content}</div>
+                          </div>
+                        )}
                       </div>
                     ) : (
                       <>
@@ -411,7 +587,7 @@ export default function App() {
                         )}
 
                         {/* Download button */}
-                        {msg.sessionId && msg.content && (
+                        {msg.sessionId && msg.content && msg.results?.length > 0 && (
                           <button
                             id={`downloadBtn-${idx}`}
                             className="download-btn"

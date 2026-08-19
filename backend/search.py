@@ -63,11 +63,12 @@ async def search_papers(query: str, sources: list[str] | None = None, filters: d
     sources = sources or ["papers", "web"]
     filters = filters or {}
     
-    # Use minCitations as the top K data count to fetch
+    # The user expects the "minCitations" value to dictate the total number of fetched sites
     total_results = filters.get("minCitations", 10)
     if total_results <= 0:
         total_results = 10
-    max_per_engine = total_results
+    
+    max_per_engine = total_results + 5
     
     sites = []
     
@@ -109,6 +110,18 @@ async def search_papers(query: str, sources: list[str] | None = None, filters: d
         academic_query += f' after:{dates["start"][:4]}'
     if dates.get("end"):
         academic_query += f' before:{dates["end"][:4]}'
+
+    min_citations = filters.get("minCitations", 0)
+    if min_citations > 0:
+        academic_query += f' "cited by {min_citations}"'
+
+    journal_quality = filters.get("journalQuality", 4)
+    if journal_quality == 0:
+        academic_query += ' "Q1 journal"'
+    elif journal_quality == 1:
+        academic_query += ' "Q2 journal"'
+    elif journal_quality == 2:
+        academic_query += ' "Q3 journal"'
 
     if sites:
         # Build OR'd site list: site:arxiv.org OR site:ncbi.nlm.nih.gov
