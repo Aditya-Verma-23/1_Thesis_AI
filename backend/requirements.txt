@@ -1,0 +1,10 @@
+ddgs
+googlesearch-python
+fastapi
+uvicorn[standard]
+pydantic>=2.11
+pydantic-settings>=2.8
+loguru
+requests
+python-docx
+httpx
