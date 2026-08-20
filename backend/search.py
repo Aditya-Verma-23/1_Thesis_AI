@@ -36,6 +36,21 @@ def _ddg_sync(query: str, max_results: int) -> list[dict]:
         logger.warning(f"DuckDuckGo failed: {exc}")
         return []
 
+def _ddg_images_sync(query: str, max_results: int) -> list[str]:
+    """DuckDuckGo image search using the ddgs package."""
+    try:
+        from ddgs import DDGS
+        images = []
+        with DDGS() as ddgs:
+            for r in ddgs.images(query, max_results=max_results):
+                url = r.get("image")
+                if url:
+                    images.append(url)
+        return images
+    except Exception as exc:
+        logger.warning(f"DuckDuckGo images failed: {exc}")
+        return []
+
 
 def _google_sync(query: str, max_results: int) -> list[dict]:
     """Google search using googlesearch-python (keyless scrape)."""
@@ -131,10 +146,11 @@ async def search_papers(query: str, sources: list[str] | None = None, filters: d
         academic_query = f"{academic_query} research paper thesis"
 
     try:
-        ddg_raw, google_raw = await asyncio.wait_for(
+        ddg_raw, google_raw, ddg_images = await asyncio.wait_for(
             asyncio.gather(
                 asyncio.to_thread(_ddg_sync, academic_query, max_per_engine),
                 asyncio.to_thread(_google_sync, academic_query, max_per_engine),
+                asyncio.to_thread(_ddg_images_sync, academic_query, 3),
                 return_exceptions=True,
             ),
             timeout=TIMEOUT_S,
@@ -149,6 +165,9 @@ async def search_papers(query: str, sources: list[str] | None = None, filters: d
     if isinstance(google_raw, Exception):
         logger.warning(f"Google gather error: {google_raw}")
         google_raw = []
+    if isinstance(ddg_images, Exception):
+        logger.warning(f"DDG Images gather error: {ddg_images}")
+        ddg_images = []
 
     # Merge: DuckDuckGo first (has snippets), Google second
     seen: set[str] = set()
@@ -172,8 +191,12 @@ async def search_papers(query: str, sources: list[str] | None = None, filters: d
         if len(merged) >= total_results:
             break
 
-    # Assign 1-based indices
+    # Assign 1-based indices and distribute images
+    img_idx = 0
     for i, sr in enumerate(merged, start=1):
         sr.index = i
+        if img_idx < len(ddg_images) and img_idx < 3: # limit to top 3 images
+            sr.image_url = ddg_images[img_idx]
+            img_idx += 1
 
     return merged[:total_results]

@@ -19,6 +19,7 @@ class SearchResult(BaseModel):
     url: str | None = None
     snippet: str = ""
     source: str = "web"  # "duckduckgo" | "google" | "arxiv"
+    image_url: str | None = None
 
 
 class SynthesisResult(BaseModel):

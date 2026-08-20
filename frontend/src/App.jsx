@@ -72,20 +72,20 @@ function domainOf(url) {
 }
 
 export default function App() {
-  const [activeTab, setActiveTab]         = useState('qa');
-  const [chatStarted, setChatStarted]     = useState(false);
-  const [query, setQuery]                 = useState('');
-  const [messages, setMessages]           = useState([]);
-  const [isLoading, setIsLoading]         = useState(false);
-  const [stage, setStage]                 = useState('');
-  const [sources, setSources]             = useState(['papers', 'web']);
-  const [isFilterOpen, setIsFilterOpen]   = useState(false);
-  const [filters, setFilters]             = useState(null);
+  const [activeTab, setActiveTab] = useState('qa');
+  const [chatStarted, setChatStarted] = useState(false);
+  const [query, setQuery] = useState('');
+  const [messages, setMessages] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [stage, setStage] = useState('');
+  const [sources, setSources] = useState(['papers', 'web']);
+  const [isFilterOpen, setIsFilterOpen] = useState(false);
+  const [filters, setFilters] = useState(null);
   const [isBackendReady, setIsBackendReady] = useState(false);
   const [backendStatusMsg, setBackendStatusMsg] = useState('Connecting to backend…');
   const [sidebarSearch, setSidebarSearch] = useState('');
   const [editingMessageIdx, setEditingMessageIdx] = useState(null);
-  const [editContent, setEditContent]             = useState('');
+  const [editContent, setEditContent] = useState('');
   const [recentQueries, setRecentQueries] = useState(() => {
     try { return JSON.parse(localStorage.getItem('thesisai_recent') || '[]'); }
     catch { return []; }
@@ -94,8 +94,10 @@ export default function App() {
   const [editingChatKey, setEditingChatKey] = useState(null);
   const [editingChatTitle, setEditingChatTitle] = useState('');
   const [openMenuKey, setOpenMenuKey] = useState(null);
+  const [showScrollDown, setShowScrollDown] = useState(false);
 
   const chatEndRef = useRef(null);
+  const contentRef = useRef(null);
 
   // Backend health check
   useEffect(() => {
@@ -124,10 +126,31 @@ export default function App() {
     return () => window.removeEventListener('click', handleClick);
   }, []);
 
-  // Auto-scroll
+  const handleScroll = () => {
+    if (!contentRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = contentRef.current;
+    const isAtBottom = scrollHeight - scrollTop - clientHeight < 50;
+    if (isAtBottom) {
+      setShowScrollDown(false);
+    } else {
+      if (chatStarted && messages.length > 0) {
+        setShowScrollDown(true);
+      }
+    }
+  };
+
+  // Auto-resize composer
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, stage]);
+    const resize = (id) => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.style.height = 'auto';
+        el.style.height = `${el.scrollHeight}px`;
+      }
+    };
+    resize('queryInput');
+    resize('queryInputDocked');
+  }, [query, chatStarted]);
 
   const toggleSource = (src) =>
     setSources(prev => prev.includes(src) ? prev.filter(s => s !== src) : [...prev, src]);
@@ -149,7 +172,7 @@ export default function App() {
 
     setMessages(prev => [
       ...prev,
-      { role: 'user',      content: q },
+      { role: 'user', content: q },
       { role: 'assistant', content: '', results: [], sessionId: null },
     ]);
 
@@ -182,9 +205,9 @@ export default function App() {
 
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-      const reader  = res.body.getReader();
+      const reader = res.body.getReader();
       const decoder = new TextDecoder('utf-8');
-      let   buffer  = '';
+      let buffer = '';
 
       const updateLast = (fn) =>
         setMessages(prev => {
@@ -203,9 +226,9 @@ export default function App() {
           if (!part.startsWith('data: ')) continue;
           try {
             const data = JSON.parse(part.slice(6));
-            if (data.type === 'stage')  { setStage(data.message); }
+            if (data.type === 'stage') { setStage(data.message); }
             else if (data.type === 'result') { updateLast(p => ({ ...p, results: data.results || [] })); setStage(''); }
-            else if (data.type === 'token')  { updateLast(p => ({ ...p, content: p.content + data.content })); }
+            else if (data.type === 'token') { updateLast(p => ({ ...p, content: p.content + data.content })); }
             else if (data.type === 'done') {
               updateLast(p => ({ ...p, sessionId: data.session_id }));
               setStage('');
@@ -213,7 +236,7 @@ export default function App() {
               // Persist finished messages into history
               setMessages(prev => { persistMessages(prev); return prev; });
             }
-            else if (data.type === 'error')  { setStage(`Error: ${data.message}`); setIsLoading(false); }
+            else if (data.type === 'error') { setStage(`Error: ${data.message}`); setIsLoading(false); }
           } catch { /* skip */ }
         }
       }
@@ -236,13 +259,13 @@ export default function App() {
   const deleteChat = (e, q) => {
     e.stopPropagation();
     if (!window.confirm("Are you sure you want to delete this chat?")) return;
-    
+
     setRecentQueries(prev => {
       const updated = prev.filter(r => r.text !== q);
       localStorage.setItem('thesisai_recent', JSON.stringify(updated));
       return updated;
     });
-    
+
     if (activeChat === q) {
       resetChat();
     }
@@ -413,7 +436,7 @@ export default function App() {
                   <>
                     <button className="action-btn" onClick={(e) => togglePinChat(e, r.text)} title={r.pinned ? "Unpin" : "Pin"}>{r.pinned ? '📍' : '📌'}</button>
                     <button className="action-btn" onClick={(e) => { e.stopPropagation(); setOpenMenuKey(openMenuKey === r.text ? null : r.text); }} title="Options">⋮</button>
-                    
+
                     {openMenuKey === r.text && (
                       <div className="chat-options-menu" onClick={e => e.stopPropagation()}>
                         <div className="chat-option" onClick={(e) => { setOpenMenuKey(null); renameChat(e, r.text); }}>✏️ Rename</div>
@@ -437,7 +460,7 @@ export default function App() {
           <div className="avatar">AV</div>
         </div>
 
-        <div className="content">
+        <div className="content" ref={contentRef} onScroll={handleScroll}>
           <div className="content-inner">
 
             {!chatStarted ? (
@@ -455,9 +478,9 @@ export default function App() {
                       className={`tab ${activeTab === key ? 'active' : ''}`}
                       onClick={() => setActiveTab(key)}
                     >
-                      {key === 'qa'   && '🎯 Quick Q/A'}
-                      {key === 'lit'  && '📚 Literature review'}
-                      {key === 'sys'  && '⚗ Systematic review'}
+                      {key === 'qa' && '🎯 Quick Q/A'}
+                      {key === 'lit' && '📚 Literature review'}
+                      {key === 'sys' && '⚗ Systematic review'}
                       {key === 'data' && '📈 Data analysis'}
                       {key === 'gaps' && '🔍 Research gaps'}
                       {key === 'chat' && '💬 Paper chat'}
@@ -615,6 +638,17 @@ export default function App() {
             {/* Docked composer when chatting */}
             {chatStarted && (
               <div className="chat-composer-dock" id="dockedComposer">
+                {showScrollDown && (
+                  <button
+                    className="scroll-down-btn"
+                    onClick={() => {
+                      chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+                      setShowScrollDown(false);
+                    }}
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M19 12l-7 7-7-7" /></svg>
+                  </button>
+                )}
                 <div className="composer">
                   <textarea
                     id="queryInputDocked"
