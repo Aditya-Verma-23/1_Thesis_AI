@@ -20,6 +20,7 @@ class SearchResult(BaseModel):
     snippet: str = ""
     source: str = "web"  # "duckduckgo" | "google" | "arxiv"
     image_url: str | None = None
+    full_text: str = ""
 
 
 class SynthesisResult(BaseModel):

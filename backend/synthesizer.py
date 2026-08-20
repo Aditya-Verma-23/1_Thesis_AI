@@ -98,7 +98,7 @@ must have at least 2–3 substantial paragraphs.
 
 ═══ WRITING STYLE ═══
 - Formal, academic English.
-- Analyse each source deeply: discuss its methodology, findings, and implications.
+- The sources provided now contain EXTENSIVE FULL TEXT data. You MUST thoroughly analyse the specific details, methodologies, findings, and empirical evidence extracted from this full text, rather than writing surface-level summaries.
 - Connect ideas across sources — show synthesis, agreement, contradiction, and gaps.
 - The thematic sections in the Literature Review should be named descriptively \
   (e.g. "Deep Learning Architectures for Disease Detection") not generically.\
@@ -199,7 +199,7 @@ def _template_paper(query: str, results: list[SearchResult], title: str) -> str:
 
     # Build a findings paragraph per source
     lit_paragraphs = []
-    for r in results:
+    for i, r in enumerate(results):
         if not r.snippet and not getattr(r, "full_text", ""):
             continue
         content = getattr(r, "full_text", "") or r.snippet
@@ -210,11 +210,18 @@ def _template_paper(query: str, results: list[SearchResult], title: str) -> str:
             
         img_md = f"\n\n![Visual representation from {r.title}]({r.image_url})\n\n" if getattr(r, "image_url", None) else ""
         
-        lit_paragraphs.append(
-            f"In a pivotal dataset, *{r.title}*, it is established that {excerpt} {_cite(r.index)}. "
-            f"This aligns with the core hypotheses surrounding the topic, offering critical data points that "
-            f"substantiate the broader thematic trends identified in this research {_cite(r.index)}.{img_md}"
-        )
+        if i % 2 == 0:
+            lit_paragraphs.append(
+                f"Detailed analysis of the literature, particularly *{r.title}*, highlights that {excerpt} {_cite(r.index)}. "
+                f"These findings substantiate the broader thematic trends identified across the dataset, offering critical "
+                f"insights that inform the subsequent discussion {_cite(r.index)}.{img_md}"
+            )
+        else:
+            lit_paragraphs.append(
+                f"Expanding upon these observations, further research demonstrates how structural constraints impact the topic. "
+                f"Specifically, {excerpt} {_cite(r.index)}. This underscores the necessity for comprehensive empirical approaches "
+                f"to fully contextualise the variables involved.{img_md}"
+            )
 
     lit_text = "\n\n".join(lit_paragraphs) if lit_paragraphs else (
         f"The retrieved sources collectively address *{query}* from multiple angles. "

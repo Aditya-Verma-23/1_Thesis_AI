@@ -7,6 +7,8 @@ loop is never blocked. Results are merged and deduplicated by URL.
 from __future__ import annotations
 
 import asyncio
+import httpx
+from bs4 import BeautifulSoup
 from loguru import logger
 
 from models import SearchResult
@@ -69,6 +71,24 @@ def _google_sync(query: str, max_results: int) -> list[dict]:
         logger.warning(f"Google search failed: {exc}")
         return []
 
+async def _scrape_url(url: str) -> str:
+    """Fetch and extract main text from a URL."""
+    if not url or not url.startswith("http"):
+        return ""
+    try:
+        async with httpx.AsyncClient(verify=False, timeout=6.0) as client:
+            resp = await client.get(url, follow_redirects=True)
+            resp.raise_for_status()
+            soup = BeautifulSoup(resp.content, "html.parser")
+            # Remove scripts and styles
+            for script in soup(["script", "style", "nav", "header", "footer"]):
+                script.decompose()
+            text = soup.get_text(separator=" ", strip=True)
+            # Take up to 6000 chars to avoid blowing up the context window
+            return text[:6000]
+    except Exception as exc:
+        logger.debug(f"Failed to scrape {url}: {exc}")
+        return ""
 
 # ── Public async function ──────────────────────────────────────────────────────
 
@@ -198,5 +218,13 @@ async def search_papers(query: str, sources: list[str] | None = None, filters: d
         if img_idx < len(ddg_images) and img_idx < 3: # limit to top 3 images
             sr.image_url = ddg_images[img_idx]
             img_idx += 1
+            
+    # Concurrently scrape the full text for all top results
+    scrape_tasks = [_scrape_url(sr.url) for sr in merged[:total_results]]
+    scraped_texts = await asyncio.gather(*scrape_tasks, return_exceptions=True)
+    
+    for sr, text in zip(merged[:total_results], scraped_texts):
+        if isinstance(text, str) and text:
+            sr.full_text = text
 
     return merged[:total_results]
