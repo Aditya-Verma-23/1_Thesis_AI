@@ -86,6 +86,13 @@ export default function App() {
   const [sidebarSearch, setSidebarSearch] = useState('');
   const [editingMessageIdx, setEditingMessageIdx] = useState(null);
   const [editContent, setEditContent] = useState('');
+  const [splitView, setSplitView] = useState(false);
+  const [thesisEditMode, setThesisEditMode] = useState(false);
+  const [thesisEditContent, setThesisEditContent] = useState('');
+  const [leftPanelWidth, setLeftPanelWidth] = useState(60); // percentage
+  const isDragging = useRef(false);
+  const splitContainerRef = useRef(null);
+  const thesisRef = useRef(null);
   const [recentQueries, setRecentQueries] = useState(() => {
     try { return JSON.parse(localStorage.getItem('thesisai_recent') || '[]'); }
     catch { return []; }
@@ -98,6 +105,60 @@ export default function App() {
 
   const chatEndRef = useRef(null);
   const contentRef = useRef(null);
+
+  // ── Resizer drag logic ──────────────────────────────────────────
+  const handleResizerMouseDown = useCallback((e) => {
+    e.preventDefault();
+    isDragging.current = true;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    const onMouseMove = (ev) => {
+      if (!isDragging.current || !splitContainerRef.current) return;
+      const container = splitContainerRef.current;
+      const containerRect = container.getBoundingClientRect();
+      let newLeftPct = ((ev.clientX - containerRect.left) / containerRect.width) * 100;
+      // Clamp: neither panel less than 30%
+      newLeftPct = Math.max(30, Math.min(70, newLeftPct));
+      setLeftPanelWidth(newLeftPct);
+    };
+
+    const onMouseUp = () => {
+      isDragging.current = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+  }, []);
+
+  // Persist active chat on refresh
+  useEffect(() => {
+    const savedActive = localStorage.getItem('thesisai_active');
+    if (savedActive) {
+      try {
+        const recents = JSON.parse(localStorage.getItem('thesisai_recent') || '[]');
+        const entry = recents.find(r => r.text === savedActive);
+        if (entry && entry.messages && entry.messages.length > 0) {
+          setMessages(entry.messages);
+          setChatStarted(true);
+          setActiveChat(entry.text);
+          setSplitView(true);
+        }
+      } catch {}
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeChat) {
+      localStorage.setItem('thesisai_active', activeChat);
+    } else {
+      localStorage.removeItem('thesisai_active');
+    }
+  }, [activeChat]);
 
   // Backend health check
   useEffect(() => {
@@ -233,6 +294,7 @@ export default function App() {
               updateLast(p => ({ ...p, sessionId: data.session_id }));
               setStage('');
               setIsLoading(false);
+              setSplitView(true);
               // Persist finished messages into history
               setMessages(prev => { persistMessages(prev); return prev; });
             }
@@ -250,11 +312,33 @@ export default function App() {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitQuery(query); }
   };
 
-  const handleDownload = (sessionId) => {
-    if (sessionId) window.open(`${BACKEND_URL}/api/download/${sessionId}`, '_blank');
+  const handleDownload = (content, sessionId) => {
+    const text = content || '';
+    const blob = new Blob([text], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `ThesisAI_${sessionId || Date.now()}.md`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
-  const resetChat = () => { setChatStarted(false); setMessages([]); setStage(''); setQuery(''); setActiveChat(null); };
+  const handleCopyThesis = (content) => {
+    navigator.clipboard.writeText(content || '');
+  };
+
+  const getLatestThesis = () => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'assistant' && messages[i].sessionId && messages[i].content) {
+        return messages[i];
+      }
+    }
+    return null;
+  };
+
+  const resetChat = () => { setChatStarted(false); setMessages([]); setStage(''); setQuery(''); setActiveChat(null); setSplitView(false); setThesisEditMode(false); };
 
   const deleteChat = (e, q) => {
     e.stopPropagation();
@@ -322,6 +406,7 @@ export default function App() {
         setMessages(recentEntry.messages);
         setChatStarted(true);
         setActiveChat(recentEntry.text);
+        setSplitView(true);
       }, 0);
     } else {
       // No cache yet — submit as a fresh query (submitQuery sets activeChat itself)
@@ -455,241 +540,304 @@ export default function App() {
       </aside>
 
       {/* Main */}
-      <main className="main">
-        <div className="topbar">
-          <div className="avatar">AV</div>
-        </div>
+      <main className={`main${splitView ? ' split-active' : ''}`}>
 
-        <div className="content" ref={contentRef} onScroll={handleScroll}>
-          <div className="content-inner">
+        {/* ─── SPLIT VIEW: Thesis Left + Sources/Chat Right ─── */}
+        {splitView && (() => {
+          const thesis = getLatestThesis();
+          if (!thesis) return null;
+          const displayContent = thesisEditMode ? thesisEditContent : thesis.content;
+          return (
+            <div className="split-container" ref={splitContainerRef}>
 
-            {!chatStarted ? (
-              /* Home view */
-              <div id="homeView">
-                <div className="watermark">THESIS</div>
-                <h1 className="greeting" id="greeting">Welcome back, Aditya</h1>
-                <p className="sub-greeting">{cfg.greeting}</p>
-
-                {/* Workflow tabs */}
-                <div className="workflow-tabs" id="workflowTabs">
-                  {Object.keys(TAB_CONFIG).map(key => (
-                    <div
-                      key={key}
-                      className={`tab ${activeTab === key ? 'active' : ''}`}
-                      onClick={() => setActiveTab(key)}
-                    >
-                      {key === 'qa' && '🎯 Quick Q/A'}
-                      {key === 'lit' && '📚 Literature review'}
-                      {key === 'sys' && '⚗ Systematic review'}
-                      {key === 'data' && '📈 Data analysis'}
-                      {key === 'gaps' && '🔍 Research gaps'}
-                      {key === 'chat' && '💬 Paper chat'}
-                    </div>
-                  ))}
-                </div>
-
-                {/* Composer */}
-                <div className="composer">
-                  <textarea
-                    id="queryInput"
-                    placeholder={cfg.placeholder}
-                    rows="3"
-                    value={query}
-                    onChange={e => setQuery(e.target.value)}
-                    onKeyDown={handleKey}
-                  />
-                  <div className="composer-toolbar">
-                    <div className="toolbar-left">
-                      <button
-                        className={`toolbar-btn ${sources.includes('papers') ? 'selected' : ''}`}
-                        onClick={() => toggleSource('papers')}
-                      >
-                        📄 Papers {sources.includes('papers') ? '✓' : ''}
-                      </button>
-                      <button
-                        className={`toolbar-btn ${sources.includes('web') ? 'selected' : ''}`}
-                        onClick={() => toggleSource('web')}
-                      >
-                        🌐 Internet {sources.includes('web') ? '✓' : ''}
-                      </button>
-                      <button className="toolbar-btn" onClick={() => setIsFilterOpen(true)}>
-                        ⚙ Filters
-                      </button>
-                    </div>
-                    <div className="toolbar-right">
-                      <button
-                        id="sendBtn"
-                        className="send-btn"
-                        onClick={() => submitQuery(query)}
-                        disabled={isLoading || !query.trim()}
-                      >↑</button>
+              {/* ─── LEFT PANEL: Thesis Document ─── */}
+              <div className="thesis-doc-panel" style={{ flex: `0 0 ${leftPanelWidth}%`, width: `${leftPanelWidth}%` }}>
+                {/* Document Toolbar */}
+                <div className="doc-toolbar">
+                  <div className="doc-toolbar-left">
+                    <select className="doc-style-select">
+                      <option>Normal Text</option>
+                      <option>Heading 1</option>
+                      <option>Heading 2</option>
+                      <option>Heading 3</option>
+                    </select>
+                    <div className="doc-format-btns">
+                      <button className="doc-fmt-btn" title="Bold"><b>B</b></button>
+                      <button className="doc-fmt-btn" title="Italic"><i>I</i></button>
+                      <button className="doc-fmt-btn" title="Underline" style={{textDecoration:'underline'}}>U</button>
+                      <button className="doc-fmt-btn" title="Code">&lt;&gt;</button>
+                      <span className="doc-fmt-divider"/>
+                      <button className="doc-fmt-btn" title="Link">🔗</button>
                     </div>
                   </div>
-                </div>
-
-                {/* Suggestion chips */}
-                <div className="try-row">
-                  {cfg.chips.map((chip, i) => (
-                    <div key={i} className="try-chip" onClick={() => setQuery(chip)}>{chip}</div>
-                  ))}
-                </div>
-              </div>
-
-            ) : (
-              /* Chat view */
-              <div id="chatView" className="chat-view">
-                {messages.map((msg, idx) => (
-                  <div key={idx}>
-                    {msg.role === 'user' ? (
-                      <div className="msg-row-user">
-                        {editingMessageIdx === idx ? (
-                          <div className="msg-user-edit">
-                            <textarea
-                              className="edit-textarea"
-                              value={editContent}
-                              onChange={e => setEditContent(e.target.value)}
-                              rows="3"
-                              autoFocus
-                            />
-                            <div className="edit-actions">
-                              <button className="edit-btn cancel" onClick={() => setEditingMessageIdx(null)}>Cancel</button>
-                              <button className="edit-btn save" onClick={() => submitEditedQuery(editContent, idx)}>Save & Submit</button>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="msg-user-wrapper">
-                            <button className="edit-icon-btn" onClick={() => { setEditingMessageIdx(idx); setEditContent(msg.content); }} title="Edit query">
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
-                            </button>
-                            <div className="msg-user">{msg.content}</div>
-                          </div>
-                        )}
-                      </div>
+                  <div className="doc-toolbar-right">
+                    {thesisEditMode ? (
+                      <>
+                        <span className="doc-edit-badge">Editing…</span>
+                        <button className="doc-action-btn primary" onClick={() => {
+                          const editableDiv = document.getElementById('thesis-editable');
+                          const updatedContent = editableDiv ? editableDiv.innerText : thesisEditContent;
+                          setMessages(prev => {
+                            const next = [...prev];
+                            for (let i = next.length - 1; i >= 0; i--) {
+                              if (next[i].role === 'assistant' && next[i].sessionId) {
+                                next[i] = { ...next[i], content: updatedContent };
+                                break;
+                              }
+                            }
+                            return next;
+                          });
+                          setThesisEditMode(false);
+                        }}>✓ Done Editing</button>
+                        <button className="doc-action-btn" onClick={() => setThesisEditMode(false)}>✕ Cancel</button>
+                      </>
                     ) : (
                       <>
-                        {/* Stage spinner */}
-                        {msg.content === '' && stage && (
-                          <div className="stage-line">
-                            <span className="stage-dot" />
-                            <span className="stage-text">{stage}</span>
-                          </div>
-                        )}
-
-                        {/* Top-10 source cards */}
-                        {msg.results && msg.results.length > 0 && (
-                          <>
-                            <div className="sources-header">
-                              📄 Research Sources
-                              <span className="sources-count">{msg.results.length} found</span>
-                            </div>
-                            <div className="sources-grid">
-                              {msg.results.map((r, i) => (
-                                <div key={i} className="source-card">
-                                  <span className="src-badge">[{r.index}] {r.source}</span>
-                                  <div className="src-title">
-                                    {r.url
-                                      ? <a href={r.url} target="_blank" rel="noopener noreferrer">{r.title || r.url}</a>
-                                      : (r.title || 'Untitled')
-                                    }
-                                  </div>
-                                  {r.snippet && <div className="src-snippet">{r.snippet.slice(0, 160)}…</div>}
-                                  {r.url && <div className="src-url">{domainOf(r.url)}</div>}
-                                </div>
-                              ))}
-                            </div>
-                          </>
-                        )}
-
-                        {/* AI synthesis */}
-                        {msg.content && (
-                          <div className="msg-assistant" style={{ marginTop: msg.results?.length ? '18px' : 0 }}>
-                            <ReactMarkdown rehypePlugins={[rehypeRaw]}>
-                              {msg.content.replace(/\[(\d+)\](?!\()/g, '<span class="cite-chip">[$1]</span>')}
-                            </ReactMarkdown>
-                          </div>
-                        )}
-
-                        {/* Download button */}
-                        {msg.sessionId && msg.content && msg.results?.length > 0 && (
-                          <button
-                            id={`downloadBtn-${idx}`}
-                            className="download-btn"
-                            onClick={() => handleDownload(msg.sessionId)}
-                          >
-                            ⬇ Download Synthesis Paper
-                          </button>
-                        )}
+                        <button className="doc-action-btn" title="Click Edit, then click anywhere in the document to edit" onClick={() => {
+                          setThesisEditContent(thesis.content);
+                          setThesisEditMode(true);
+                          setTimeout(() => {
+                            const el = document.getElementById('thesis-editable');
+                            if (el) { el.focus(); }
+                          }, 50);
+                        }}>✏️ Edit</button>
+                        <button className="doc-action-btn" title="Copy thesis" onClick={() => handleCopyThesis(thesis.content)}>📋 Copy</button>
+                        <button className="doc-action-btn primary" onClick={() => handleDownload(thesis.content, thesis.sessionId)}>⬇ Download</button>
                       </>
                     )}
                   </div>
-                ))}
+                </div>
 
-                {/* Stage during streaming */}
-                {stage && isLoading && messages[messages.length - 1]?.content !== '' && (
-                  <div className="stage-line">
-                    <span className="stage-dot" /><span>{stage}</span>
+
+                {/* Document Body */}
+                <div className={`thesis-doc-body${thesisEditMode ? ' thesis-edit-active' : ''}`} ref={thesisRef}>
+                  <div
+                    id="thesis-editable"
+                    className={`thesis-doc-content${thesisEditMode ? ' thesis-doc-editable' : ''}`}
+                    contentEditable={thesisEditMode}
+                    suppressContentEditableWarning
+                    spellCheck={thesisEditMode}
+                    onInput={(e) => setThesisEditContent(e.currentTarget.innerText)}
+                  >
+                    <ReactMarkdown rehypePlugins={[rehypeRaw]}>
+                      {thesis.content.replace(/\[(\d+)\](?!\()/g, '<span class="cite-chip">[$1]</span>')}
+                    </ReactMarkdown>
+                  </div>
+                </div>
+              </div>
+
+              {/* ─── RESIZER ─── */}
+              <div
+                className="panel-resizer"
+                onMouseDown={handleResizerMouseDown}
+                title="Drag to resize panels"
+              >
+                <div className="panel-resizer-handle">
+                  <span/><span/><span/><span/><span/>
+                </div>
+              </div>
+
+              {/* ─── RIGHT PANEL: Sources + Chat ─── */}
+              <div className="sources-chat-panel" style={{ flex: `0 0 ${100 - leftPanelWidth}%`, width: `${100 - leftPanelWidth}%` }}>
+
+                {/* Sources section */}
+                {thesis.results && thesis.results.length > 0 && (
+                  <div className="right-sources-section">
+                    <div className="sources-header">
+                      📄 Research Sources
+                      <span className="sources-count">{thesis.results.length} found</span>
+                    </div>
+                    <div className="right-sources-list">
+                      {thesis.results.map((r, i) => (
+                        <div key={i} className="source-card source-card-compact">
+                          <div className="src-header-row">
+                            <span className="src-badge">[{r.index}] {r.source}</span>
+                            {r.year && <span className="src-year">{r.year}</span>}
+                          </div>
+                          <div className="src-title">
+                            {r.url
+                              ? <a href={r.url} target="_blank" rel="noopener noreferrer">{r.title || r.url}</a>
+                              : (r.title || 'Untitled')
+                            }
+                          </div>
+                          {r.authors && <div className="src-authors">{r.authors}</div>}
+                          {r.venue && <div className="src-venue">{r.venue}{r.citationCount != null ? ` • ${r.citationCount} citations` : ''}</div>}
+                          {r.url && <div className="src-url">{domainOf(r.url)}</div>}
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
 
-                <div ref={chatEndRef} />
-              </div>
-            )}
+                {/* Follow-up chat messages */}
+                <div className="right-chat-messages" ref={contentRef} onScroll={handleScroll}>
+                  {messages.filter(m => m.role === 'user' || (m.role === 'assistant' && !m.sessionId)).map((msg, idx) => (
+                    <div key={idx}>
+                      {msg.role === 'user' && (
+                        <div className="right-user-msg">{msg.content}</div>
+                      )}
+                      {msg.role === 'assistant' && msg.content && !msg.sessionId && (
+                        <div className="right-assistant-msg">
+                          <ReactMarkdown rehypePlugins={[rehypeRaw]}>{msg.content}</ReactMarkdown>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                  {stage && isLoading && (
+                    <div className="stage-line">
+                      <span className="stage-dot" /><span>{stage}</span>
+                    </div>
+                  )}
+                  <div ref={chatEndRef} />
+                </div>
 
-            {/* Docked composer when chatting */}
-            {chatStarted && (
-              <div className="chat-composer-dock" id="dockedComposer">
-                {showScrollDown && (
-                  <button
-                    className="scroll-down-btn"
-                    onClick={() => {
-                      chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-                      setShowScrollDown(false);
-                    }}
-                  >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M19 12l-7 7-7-7" /></svg>
-                  </button>
-                )}
-                <div className="composer">
+                {/* Docked follow-up composer */}
+                <div className="right-composer">
                   <textarea
-                    id="queryInputDocked"
-                    placeholder="Ask a follow-up question"
-                    rows="1"
+                    id="rightQueryInput"
+                    className="right-composer-textarea"
+                    placeholder="Ask a follow-up question or request an edit…"
+                    rows="2"
                     value={query}
                     onChange={e => setQuery(e.target.value)}
                     onKeyDown={handleKey}
                   />
-                  <div className="composer-toolbar">
-                    <div className="toolbar-left">
-                      <button
-                        className={`toolbar-btn ${sources.includes('papers') ? 'selected' : ''}`}
-                        onClick={() => toggleSource('papers')}
-                      >
-                        📄 Papers {sources.includes('papers') ? '✓' : ''}
-                      </button>
-                      <button
-                        className={`toolbar-btn ${sources.includes('web') ? 'selected' : ''}`}
-                        onClick={() => toggleSource('web')}
-                      >
-                        🌐 Internet {sources.includes('web') ? '✓' : ''}
-                      </button>
-                      <button className="toolbar-btn" onClick={() => setIsFilterOpen(true)}>⚙ Filters</button>
+                  <div className="right-composer-actions">
+                    <div className="toolbar-left" style={{gap:'6px'}}>
+                      <button className={`toolbar-btn ${sources.includes('papers') ? 'selected' : ''}`} onClick={() => toggleSource('papers')}>📄 Papers</button>
+                      <button className={`toolbar-btn ${sources.includes('web') ? 'selected' : ''}`} onClick={() => toggleSource('web')}>🌐 Web</button>
                     </div>
-                    <div className="toolbar-right">
-                      <button
-                        id="dockedSendBtn"
-                        className="send-btn"
-                        onClick={() => submitQuery(query)}
-                        disabled={isLoading || !query.trim()}
-                      >↑</button>
-                    </div>
+                    <button
+                      className="send-btn"
+                      onClick={() => submitQuery(query)}
+                      disabled={isLoading || !query.trim()}
+                    >↑</button>
                   </div>
                 </div>
               </div>
-            )}
+            </div>
+          );
+        })()}
 
-          </div>
-        </div>
+        {/* ─── NORMAL VIEW (Home / Loading) ─── */}
+        {!splitView && (
+          <>
+            <div className="topbar"><div className="avatar">AV</div></div>
+            <div className="content" ref={contentRef} onScroll={handleScroll}>
+              <div className="content-inner">
+                {!chatStarted ? (
+                  <div id="homeView">
+                    <div className="watermark">THESIS</div>
+                    <h1 className="greeting" id="greeting">Welcome back, Aditya</h1>
+                    <p className="sub-greeting">{cfg.greeting}</p>
+
+                    <div className="workflow-tabs" id="workflowTabs">
+                      {Object.keys(TAB_CONFIG).map(key => (
+                        <div key={key} className={`tab ${activeTab === key ? 'active' : ''}`} onClick={() => setActiveTab(key)}>
+                          {key === 'qa' && '🎯 Quick Q/A'}
+                          {key === 'lit' && '📚 Literature review'}
+                          {key === 'sys' && '⚗ Systematic review'}
+                          {key === 'data' && '📈 Data analysis'}
+                          {key === 'gaps' && '🔍 Research gaps'}
+                          {key === 'chat' && '💬 Paper chat'}
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="composer">
+                      <textarea id="queryInput" placeholder={cfg.placeholder} rows="3" value={query} onChange={e => setQuery(e.target.value)} onKeyDown={handleKey} />
+                      <div className="composer-toolbar">
+                        <div className="toolbar-left">
+                          <button className={`toolbar-btn ${sources.includes('papers') ? 'selected' : ''}`} onClick={() => toggleSource('papers')}>📄 Papers {sources.includes('papers') ? '✓' : ''}</button>
+                          <button className={`toolbar-btn ${sources.includes('web') ? 'selected' : ''}`} onClick={() => toggleSource('web')}>🌐 Internet {sources.includes('web') ? '✓' : ''}</button>
+                          <button className="toolbar-btn" onClick={() => setIsFilterOpen(true)}>⚙ Filters</button>
+                        </div>
+                        <div className="toolbar-right">
+                          <button id="sendBtn" className="send-btn" onClick={() => submitQuery(query)} disabled={isLoading || !query.trim()}>↑</button>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="try-row">
+                      {cfg.chips.map((chip, i) => (
+                        <div key={i} className="try-chip" onClick={() => setQuery(chip)}>{chip}</div>
+                      ))}
+                    </div>
+                  </div>
+
+                ) : (
+                  /* Loading / Streaming view */
+                  <div id="chatView" className="chat-view">
+                    {messages.map((msg, idx) => (
+                      <div key={idx}>
+                        {msg.role === 'user' ? (
+                          <div className="msg-row-user">
+                            <div className="msg-user-wrapper">
+                              <div className="msg-user">{msg.content}</div>
+                            </div>
+                          </div>
+                        ) : (
+                          <>
+                            {msg.content === '' && stage && (
+                              <div className="stage-line">
+                                <span className="stage-dot" />
+                                <span className="stage-text">{stage}</span>
+                              </div>
+                            )}
+                            {msg.results && msg.results.length > 0 && (
+                              <>
+                                <div className="sources-header">📄 Research Sources <span className="sources-count">{msg.results.length} found</span></div>
+                                <div className="sources-grid">
+                                  {msg.results.map((r, i) => (
+                                    <div key={i} className="source-card">
+                                      <span className="src-badge">[{r.index}] {r.source}</span>
+                                      <div className="src-title">{r.url ? <a href={r.url} target="_blank" rel="noopener noreferrer">{r.title || r.url}</a> : (r.title || 'Untitled')}</div>
+                                      {r.snippet && <div className="src-snippet">{r.snippet.slice(0, 160)}…</div>}
+                                      {r.url && <div className="src-url">{domainOf(r.url)}</div>}
+                                    </div>
+                                  ))}
+                                </div>
+                              </>
+                            )}
+                            {msg.content && (
+                              <div className="msg-assistant">
+                                <ReactMarkdown rehypePlugins={[rehypeRaw]}>
+                                  {msg.content.replace(/\[(\d+)\](?!\()/g, '<span class="cite-chip">[$1]</span>')}
+                                </ReactMarkdown>
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    ))}
+                    {stage && isLoading && <div className="stage-line"><span className="stage-dot" /><span>{stage}</span></div>}
+                    <div ref={chatEndRef} />
+                  </div>
+                )}
+
+                {chatStarted && (
+                  <div className="chat-composer-dock" id="dockedComposer">
+                    <div className="composer">
+                      <textarea id="queryInputDocked" placeholder="Ask a follow-up question" rows="1" value={query} onChange={e => setQuery(e.target.value)} onKeyDown={handleKey} />
+                      <div className="composer-toolbar">
+                        <div className="toolbar-left">
+                          <button className={`toolbar-btn ${sources.includes('papers') ? 'selected' : ''}`} onClick={() => toggleSource('papers')}>📄 Papers {sources.includes('papers') ? '✓' : ''}</button>
+                          <button className={`toolbar-btn ${sources.includes('web') ? 'selected' : ''}`} onClick={() => toggleSource('web')}>🌐 Internet {sources.includes('web') ? '✓' : ''}</button>
+                          <button className="toolbar-btn" onClick={() => setIsFilterOpen(true)}>⚙ Filters</button>
+                        </div>
+                        <div className="toolbar-right">
+                          <button id="dockedSendBtn" className="send-btn" onClick={() => submitQuery(query)} disabled={isLoading || !query.trim()}>↑</button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </>
+        )}
       </main>
+
 
       <FilterPanel
         isOpen={isFilterOpen}
