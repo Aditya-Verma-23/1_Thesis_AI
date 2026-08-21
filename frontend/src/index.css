@@ -1101,7 +1101,7 @@ h1.greeting {
   text-decoration: underline;
 }
 
-/* References list — each ref on its own block */
+/* References list Ã¢â‚¬â€ each ref on its own block */
 .msg-assistant ol {
   padding-left: 0;
   margin-bottom: 14px;
@@ -1446,9 +1446,9 @@ h1.greeting {
   object-fit: contain;
 }
 
-/* ══════════════════════════════════════════════
+/* Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
    SPLIT VIEW LAYOUT
-══════════════════════════════════════════════ */
+Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â */
 
 .main.split-active {
   display: flex;
@@ -1464,7 +1464,7 @@ h1.greeting {
   overflow: hidden;
 }
 
-/* ─── LEFT: Thesis Document Panel ─── */
+/* Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ LEFT: Thesis Document Panel Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ */
 .thesis-doc-panel {
   flex: 0 0 60%;
   display: flex;
@@ -1645,7 +1645,7 @@ h1.greeting {
   object-fit: contain;
 }
 
-/* ─── RIGHT: Sources + Chat Panel ─── */
+/* Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ RIGHT: Sources + Chat Panel Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ */
 .sources-chat-panel {
   flex: 0 0 40%;
   display: flex;
@@ -1655,9 +1655,10 @@ h1.greeting {
 }
 
 .right-sources-section {
-  flex-shrink: 0;
-  max-height: 48%;
-  overflow-y: auto;
+  /* Height is controlled by topPanelHeight% inline style from React */
+  display: flex;
+  flex-direction: column;
+  overflow: hidden; /* clip to allocated height */
   border-bottom: 1px solid var(--line);
   padding: 14px;
 }
@@ -1667,6 +1668,9 @@ h1.greeting {
   flex-direction: column;
   gap: 8px;
   margin-top: 8px;
+  overflow-y: auto; /* this list scrolls within the section */
+  flex: 1 1 0%;
+  min-height: 0;
 }
 
 .source-card-compact {
@@ -1720,6 +1724,111 @@ h1.greeting {
   max-width: 85%;
 }
 
+.right-user-msg-container {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  width: 100%;
+}
+
+.msg-wrapper {
+  position: relative;
+}
+
+.msg-edit-btn {
+  position: absolute;
+  top: -12px;
+  right: -8px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  width: 26px;
+  height: 26px;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(2px);
+  transition: opacity 0.15s, transform 0.15s, box-shadow 0.15s;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+}
+
+.msg-wrapper:hover .msg-edit-btn {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.msg-edit-btn:hover {
+  box-shadow: 0 2px 5px rgba(0,0,0,0.15);
+  background: #fafafa;
+}
+
+.edit-message-box {
+  width: 100%;
+  max-width: 85%;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+}
+
+.edit-message-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 8px;
+  font-family: inherit;
+  font-size: 13.5px;
+  resize: vertical;
+  min-height: 60px;
+  outline: none;
+}
+
+.edit-message-textarea:focus {
+  border-color: var(--maroon);
+}
+
+.edit-message-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.edit-btn {
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  transition: background 0.15s, opacity 0.15s;
+}
+
+.edit-btn.cancel {
+  background: #f1f1f1;
+  color: #333;
+}
+
+.edit-btn.cancel:hover {
+  background: #e5e5e5;
+}
+
+.edit-btn.save {
+  background: var(--maroon);
+  color: #fff;
+}
+
+.edit-btn.save:hover {
+  background: #7a1532;
+}
+
 .right-assistant-msg {
   align-self: flex-start;
   background: #fff;
@@ -1734,30 +1843,31 @@ h1.greeting {
 /* Right Composer */
 .right-composer {
   flex-shrink: 0;
-  border-top: 1px solid var(--line);
-  background: #fff;
-  padding: 10px 12px;
+  position: relative;
+  border: 1px solid var(--line);
+  background: #f7f7f8;
+  padding: 10px 14px;
+  border-radius: 12px;
+  margin: 12px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.03);
 }
 
 .right-composer-textarea {
   width: 100%;
   box-sizing: border-box;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 10px 14px;
+  border: none;
+  padding: 4px 0 8px 0;
   font-size: 13.5px;
   font-family: inherit;
   resize: none;
   outline: none;
   color: var(--ink);
-  background: #fafafa;
-  transition: border-color .2s;
-  margin-bottom: 8px;
+  background: transparent;
+  margin-bottom: 4px;
 }
 
 .right-composer-textarea:focus {
-  border-color: var(--maroon);
-  background: #fff;
+  /* No visible change on focus since the outer container wraps it */
 }
 
 .right-composer-actions {
@@ -1767,9 +1877,9 @@ h1.greeting {
   gap: 6px;
 }
 
-/* ──────────────────────────────────────────────
+/* Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
    PANEL RESIZER
-────────────────────────────────────────────── */
+Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ */
 
 .panel-resizer {
   flex: 0 0 6px;
@@ -1841,9 +1951,276 @@ h1.greeting {
   min-width: 0;
 }
 
-/* ──────────────────────────────────────────────
+/* Right panel must be a flex column for the vertical split to work */
+.sources-chat-panel {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Vertical resizer (Sources / Chat) ── */
+.v-panel-resizer {
+  flex: 0 0 8px;
+  height: 8px;
+  min-height: 8px;
+  background: var(--line);
+  cursor: row-resize;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  transition: background .15s;
+  z-index: 10;
+}
+
+.v-panel-resizer:hover,
+.v-panel-resizer:active {
+  background: #93c5fd;
+}
+
+.v-panel-resizer-handle {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  height: 22px;
+  width: 32px;
+  background: #fff;
+  border: 1.5px solid var(--line);
+  border-radius: 6px;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  box-shadow: 0 1px 6px rgba(0,0,0,.12);
+  transition: border-color .15s, box-shadow .15s;
+  pointer-events: none;
+}
+
+.v-panel-resizer:hover .v-panel-resizer-handle,
+.v-panel-resizer:active .v-panel-resizer-handle {
+  border-color: #3b82f6;
+  box-shadow: 0 2px 10px rgba(59,130,246,.3);
+}
+
+.v-panel-resizer-handle span {
+  display: block;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #c0c0c0;
+  transition: background .15s;
+}
+
+.v-panel-resizer:hover .v-panel-resizer-handle span,
+.v-panel-resizer:active .v-panel-resizer-handle span {
+  background: #3b82f6;
+}
+
+
+/* Chat section wrapper: messages scroll, composer stays pinned at bottom */
+.right-chat-section {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.right-chat-messages {
+  flex: 1 1 0%;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+/* Composer always sticks to the bottom */
+/* .right-composer already defined above, but we keep the flex property */
+.right-composer {
+  flex: 0 0 auto;
+}
+
+/* ─── NEW COMPOSER TOOLBAR UI ─── */
+.sources-toggle-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+  transition: background .15s;
+}
+
+.sources-toggle-btn:hover {
+  background: rgba(0,0,0,0.04);
+}
+
+.toggle-switch {
+  width: 32px;
+  height: 18px;
+  border-radius: 12px;
+  background: #ccc;
+  position: relative;
+  transition: background .2s ease;
+}
+
+.toggle-switch.on {
+  background: #22c55e;
+}
+
+.toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform .2s ease;
+  box-shadow: 0 1px 3px rgba(0,0,0,.2);
+}
+
+.toggle-switch.on .toggle-thumb {
+  transform: translateX(14px);
+}
+
+.sources-label {
+  font-size: 13.5px;
+  font-weight: 500;
+  color: #333;
+}
+
+.sources-chevron {
+  font-size: 14px;
+  color: #666;
+}
+
+.sources-popover-menu {
+  position: absolute;
+  bottom: calc(100% + 12px);
+  left: 0;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+  min-width: 160px;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  animation: popover-fade-in .15s ease-out;
+}
+
+@keyframes popover-fade-in {
+  from { opacity: 0; transform: translateY(6px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.popover-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #333;
+  cursor: pointer;
+  transition: background .15s;
+}
+
+.popover-item:hover {
+  background: #f5f5f5;
+}
+
+.popover-item .check {
+  color: #22c55e;
+  font-weight: bold;
+}
+
+.icon-btn {
+  background: #f1f1f1;
+  border: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  color: #555;
+  cursor: pointer;
+  transition: background .15s, color .15s;
+}
+
+.icon-btn:hover {
+  background: #e5e5e5;
+  color: #111;
+}
+
+.right-composer-actions .send-btn {
+  background: var(--maroon);
+  color: #fff;
+  border: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  cursor: pointer;
+  transition: background .15s, opacity .15s;
+}
+
+.right-composer-actions .send-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.right-composer-actions .send-btn:not(:disabled):hover {
+  background: #7a1532;
+}
+
+/* Scroll-to-bottom FAB — only visible when content is overflowing */
+.right-chat-section {
+  position: relative; /* needed for FAB absolute positioning */
+}
+
+.chat-scroll-fab {
+  position: absolute;
+  bottom: 100px; /* sits just above the composer */
+  right: 14px;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--maroon);
+  color: #fff;
+  border: none;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0,0,0,.18);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 20;
+  transition: transform .15s, box-shadow .15s;
+  animation: fab-in .18s ease;
+}
+
+.chat-scroll-fab:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 14px rgba(0,0,0,.22);
+}
+
+@keyframes fab-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
    INLINE DOCUMENT EDITING (Word-like)
-────────────────────────────────────────────── */
+Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ */
 
 /* Subtle background shift when in edit mode */
 .thesis-doc-body.thesis-edit-active {
@@ -1881,7 +2258,7 @@ h1.greeting {
   border-radius: 3px;
 }
 
-/* "Editing…" badge in toolbar */
+/* "EditingÃ¢â‚¬Â¦" badge in toolbar */
 .doc-edit-badge {
   display: inline-block;
   background: rgba(37,99,235,0.10);
@@ -1899,3 +2276,60 @@ h1.greeting {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.55; }
 }
+
+.thesis-doc-content a, .msg-assistant a {
+  word-break: break-all;
+}
+.ql-editor { font-family: 'Georgia', serif; font-size: 15px; line-height: 1.6; padding: 20px 40px; color: #1e1e1e; } .ql-toolbar.ql-snow { border: none !important; border-bottom: 1px solid #e9ecef !important; background: #fafafa; padding: 12px 20px !important; } .ql-container.ql-snow { border: none !important; }
+
+
+/* =========================================================================
+   CUSTOM WYSIWYG TOOLBAR STYLES
+   ========================================================================= */
+.doc-toolbar-primary {
+  display: flex; align-items: center; gap: 8px; padding: 10px 16px;
+  background-color: #f8f9fb; border-bottom: 1px solid #e1e4e8;
+  border-top-left-radius: 8px; border-top-right-radius: 8px;
+}
+.doc-toolbar-primary .ql-divider { width: 1px; height: 20px; background-color: #d1d5da; margin: 0 4px; }
+.doc-toolbar-secondary {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 16px; background-color: #ffffff; border-bottom: 1px solid #e1e4e8;
+}
+.action-bar-left { display: flex; align-items: center; gap: 12px; }
+.action-bar-right { display: flex; align-items: center; gap: 8px; }
+.action-btn-styled {
+  display: flex; align-items: center; gap: 6px; padding: 6px 12px;
+  background: #ffffff; border: 1px solid #d1d5da; border-radius: 6px;
+  font-size: 13px; color: #24292e; cursor: pointer; transition: all 0.2s; box-shadow: 0 1px 2px rgba(27,31,35,0.04);
+}
+.action-btn-styled:hover { background: #f3f4f6; border-color: #c6cbd1; }
+.style-select-dropdown {
+  padding: 6px 12px; background: #f8f9fb; border: 1px solid #d1d5da;
+  border-radius: 6px; font-size: 13px; color: #24292e; cursor: pointer; outline: none;
+}
+.insert-dropdown-container { margin-left: auto; position: relative; }
+.insert-plus-btn {
+  background: none; border: none; font-size: 20px; color: #586069;
+  cursor: pointer; padding: 0 8px; display: flex; align-items: center; justify-content: center; border-radius: 4px;
+}
+.insert-plus-btn:hover { background: #e1e4e8; color: #24292e; }
+.insert-dropdown-menu {
+  position: absolute; top: 100%; right: 0; margin-top: 4px;
+  background: #ffffff; border: 1px solid #e1e4e8; border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1); display: flex; flex-direction: column; min-width: 160px; z-index: 1000; padding: 4px 0;
+}
+.insert-dropdown-menu button {
+  padding: 8px 16px; text-align: left; background: none; border: none;
+  font-size: 13px; color: #24292e; cursor: pointer; display: flex; align-items: center; gap: 8px;
+}
+.insert-dropdown-menu button:hover { background: #f3f4f6; }
+.ql-toolbar.ql-snow { border: none !important; padding: 0 !important; }
+.ql-container.ql-snow { border: none !important; }
+.thesis-doc-body.thesis-edit-active {
+  padding: 0; border: 1px solid #e1e4e8; border-top: none;
+  border-bottom-left-radius: 8px; border-bottom-right-radius: 8px; background: #ffffff; margin: 16px; height: calc(100% - 120px) !important; overflow-y: auto;
+}
+.ql-editor { padding: 40px !important; font-size: 15px; line-height: 1.6; color: #24292e; }
+
+.thesis-doc-content img { max-width: 100%; height: auto; border-radius: 8px; margin: 10px 0; }

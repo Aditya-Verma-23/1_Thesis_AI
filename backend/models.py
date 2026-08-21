@@ -11,6 +11,8 @@ class QueryRequest(BaseModel):
     session_id: str | None = None
     sources: list[str] | None = None
     filters: dict | None = None
+    is_followup: bool = False
+    thesis_context: str | None = None  # the current thesis text for follow-up chats
 
 
 class SearchResult(BaseModel):

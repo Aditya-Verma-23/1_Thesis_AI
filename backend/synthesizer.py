@@ -119,6 +119,23 @@ Rules:
 """
 
 
+CHAT_PROMPT = """\
+You are ThesisAI, an expert academic research assistant.
+The user has already generated a full thesis paper (provided below as "THESIS CONTEXT").
+They are now asking a follow-up question. Your job is to answer it directly and concisely.
+
+RULES:
+1. Answer the specific question directly. START immediately with the answer — no preamble.
+2. Do NOT begin your response with phrases like "Based on the thesis", "Based on the retrieved sources",
+   "Here is what the data shows", "According to the sources", or any similar introductory filler.
+3. Be concise but thorough — 2 to 5 paragraphs maximum.
+4. Use inline citations like [1], [2] when referencing facts from the new sources.
+5. Do NOT include a References section — the UI handles this automatically.
+6. Write in formal, academic English.
+7. If neither the thesis nor the new sources contain the answer, say so clearly and directly.
+"""
+
+
 # ── Title generation (quick non-streaming Ollama call) ────────────────────────
 
 def _generate_title_sync(query: str) -> str:
@@ -182,6 +199,44 @@ def _stream_sync(query: str, sources_text: str, title: str):
             except (json.JSONDecodeError, KeyError, IndexError):
                 continue
 
+def _stream_chat_sync(query: str, sources_text: str, thesis_context: str | None):
+    """Streaming helper for follow-up chat queries using thesis context."""
+    thesis_block = ""
+    if thesis_context:
+        # Truncate thesis context to avoid exceeding context window
+        truncated = thesis_context[:6000]
+        thesis_block = f"\n\n=== THESIS CONTEXT (the generated paper) ===\n{truncated}\n=== END THESIS CONTEXT ==="
+
+    user_msg = (
+        f"User question: {query}"
+        f"{thesis_block}\n\n"
+        f"=== NEW SOURCES RETRIEVED FOR THIS QUESTION ===\n{sources_text}"
+    )
+    payload = {
+        "model":       OLLAMA_MODEL,
+        "temperature": 0.4,
+        "stream":      True,
+        "messages": [
+            {"role": "system", "content": CHAT_PROMPT},
+            {"role": "user",   "content": user_msg},
+        ],
+    }
+    with requests.post(OLLAMA_URL, json=payload, timeout=TIMEOUT_S, stream=True) as resp:
+        resp.raise_for_status()
+        for line in resp.iter_lines(decode_unicode=True):
+            if not line or not line.startswith("data:"):
+                continue
+            data = line[len("data:"):].strip()
+            if data == "[DONE]":
+                return
+            try:
+                obj = json.loads(data)
+                delta = obj["choices"][0]["delta"]
+                if "content" in delta and delta["content"]:
+                    yield delta["content"]
+            except (json.JSONDecodeError, KeyError, IndexError):
+                continue
+
 
 # ── Fallback template (no LLM) ────────────────────────────────────────────────
 
@@ -194,7 +249,7 @@ def _template_paper(query: str, results: list[SearchResult], title: str) -> str:
         return f"[{idx}]"
 
     refs_section = "\n\n".join(
-        f"[[{r.index}]]({r.url}) {r.title}  \n&nbsp;&nbsp;&nbsp;&nbsp;{r.url}" for r in results
+        f"[[{r.index}]]({r.url}) **{r.title}**  \n{r.url}" for r in results
     )
 
     # Build a findings paragraph per source
@@ -329,7 +384,20 @@ def _format_sources(results: list[SearchResult]) -> str:
     return "\n\n---\n\n".join(lines) if lines else "(no sources)"
 
 
-async def synthesize(query: str, results: list[SearchResult]) -> AsyncIterator[str]:
+def _template_chat(query: str, results: list[SearchResult], thesis_context: str | None) -> str:
+    """Fallback chat response when Ollama is offline."""
+    if not results and not thesis_context:
+        return "No specific information was found to answer your question."
+    snippet = results[0].snippet if results else ""
+    return snippet if snippet else "No relevant information found for your question."
+
+
+async def synthesize(
+    query: str,
+    results: list[SearchResult],
+    is_followup: bool = False,
+    thesis_context: str | None = None,
+) -> AsyncIterator[str]:
     """Yield paper tokens. Falls back to template if Ollama is offline."""
     sources_text = _format_sources(results)
 
@@ -339,20 +407,26 @@ async def synthesize(query: str, results: list[SearchResult]) -> AsyncIterator[s
 
     def producer():
         nonlocal ollama_available
-        # Step 1: generate a refined title via LLM (quick, non-streaming)
-        title = _generate_title_sync(query)
-        logger.info(f"Using title: {title}")
         try:
-            for token in _stream_sync(query, sources_text, title):
-                loop.call_soon_threadsafe(queue.put_nowait, token)
+            if is_followup:
+                # Chat mode: answer question using thesis context + new sources
+                for token in _stream_chat_sync(query, sources_text, thesis_context):
+                    loop.call_soon_threadsafe(queue.put_nowait, token)
+            else:
+                # Thesis mode: generate full paper
+                title = _generate_title_sync(query)
+                logger.info(f"Using title: {title}")
+                for token in _stream_sync(query, sources_text, title):
+                    loop.call_soon_threadsafe(queue.put_nowait, token)
         except Exception as exc:
             err_msg = f"Ollama unavailable ({exc}); using template fallback"
             logger.warning(err_msg)
             ollama_available = False
-            
-            # Generate template without injecting the warning into the UI
-            fallback = _template_paper(query, results, title)
-            
+            if is_followup:
+                fallback = _template_chat(query, results, thesis_context)
+            else:
+                title = _generate_title_sync(query)
+                fallback = _template_paper(query, results, title)
             chunk_size = 80
             for i in range(0, len(fallback), chunk_size):
                 loop.call_soon_threadsafe(queue.put_nowait, fallback[i:i + chunk_size])

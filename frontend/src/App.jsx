@@ -1,8 +1,13 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import './index.css';
+import ReactQuill from 'react-quill';
+import 'react-quill/dist/quill.snow.css';
+import { marked } from 'marked';
+import TurndownService from 'turndown';
 import FilterPanel from './components/FilterPanel';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
+import remarkGfm from 'remark-gfm';
 
 const BACKEND_URL = 'http://localhost:8888';
 
@@ -76,6 +81,8 @@ export default function App() {
   const [chatStarted, setChatStarted] = useState(false);
   const [query, setQuery] = useState('');
   const [messages, setMessages] = useState([]);
+  const [editingIndex, setEditingIndex] = useState(null);
+  const [editDraft, setEditDraft] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [stage, setStage] = useState('');
   const [sources, setSources] = useState(['papers', 'web']);
@@ -90,8 +97,11 @@ export default function App() {
   const [thesisEditMode, setThesisEditMode] = useState(false);
   const [thesisEditContent, setThesisEditContent] = useState('');
   const [leftPanelWidth, setLeftPanelWidth] = useState(60); // percentage
+  const [topPanelHeight, setTopPanelHeight] = useState(50); // percentage of right panel height
   const isDragging = useRef(false);
+  const isVDragging = useRef(false);
   const splitContainerRef = useRef(null);
+  const rightPanelRef = useRef(null);
   const thesisRef = useRef(null);
   const [recentQueries, setRecentQueries] = useState(() => {
     try { return JSON.parse(localStorage.getItem('thesisai_recent') || '[]'); }
@@ -102,6 +112,9 @@ export default function App() {
   const [editingChatTitle, setEditingChatTitle] = useState('');
   const [openMenuKey, setOpenMenuKey] = useState(null);
   const [showScrollDown, setShowScrollDown] = useState(false);
+  const [isSourcesMenuOpen, setIsSourcesMenuOpen] = useState(false);
+  const [insertMenuOpen, setInsertMenuOpen] = useState(false);
+  const [sourcesEnabled, setSourcesEnabled] = useState(true);
 
   const chatEndRef = useRef(null);
   const contentRef = useRef(null);
@@ -135,6 +148,34 @@ export default function App() {
     window.addEventListener('mouseup', onMouseUp);
   }, []);
 
+  // ── Vertical resizer drag logic (Sources / Chat split in right panel) ──
+  const handleVResizerMouseDown = useCallback((e) => {
+    e.preventDefault();
+    isVDragging.current = true;
+    document.body.style.cursor = 'row-resize';
+    document.body.style.userSelect = 'none';
+
+    const onMouseMove = (ev) => {
+      if (!isVDragging.current || !rightPanelRef.current) return;
+      const rect = rightPanelRef.current.getBoundingClientRect();
+      let newTopPct = ((ev.clientY - rect.top) / rect.height) * 100;
+      // Clamp: neither section less than 30%
+      newTopPct = Math.max(30, Math.min(70, newTopPct));
+      setTopPanelHeight(newTopPct);
+    };
+
+    const onMouseUp = () => {
+      isVDragging.current = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+  }, []);
+
   // Persist active chat on refresh
   useEffect(() => {
     const savedActive = localStorage.getItem('thesisai_active');
@@ -148,7 +189,7 @@ export default function App() {
           setActiveChat(entry.text);
           setSplitView(true);
         }
-      } catch {}
+      } catch { }
     }
   }, []);
 
@@ -180,9 +221,14 @@ export default function App() {
     return () => clearTimeout(tid);
   }, []);
 
-  // Close options menu on outside click
+  // Close options menus on outside click
   useEffect(() => {
-    const handleClick = () => setOpenMenuKey(null);
+    const handleClick = (e) => {
+      setOpenMenuKey(null);
+      if (!e.target.closest('.sources-menu-container')) {
+        setIsSourcesMenuOpen(false);
+      }
+    };
     window.addEventListener('click', handleClick);
     return () => window.removeEventListener('click', handleClick);
   }, []);
@@ -190,14 +236,9 @@ export default function App() {
   const handleScroll = () => {
     if (!contentRef.current) return;
     const { scrollTop, scrollHeight, clientHeight } = contentRef.current;
-    const isAtBottom = scrollHeight - scrollTop - clientHeight < 50;
-    if (isAtBottom) {
-      setShowScrollDown(false);
-    } else {
-      if (chatStarted && messages.length > 0) {
-        setShowScrollDown(true);
-      }
-    }
+    // Show FAB only when user has scrolled up and there's hidden content below
+    const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
+    setShowScrollDown(distanceFromBottom > 80);
   };
 
   // Auto-resize composer
@@ -222,9 +263,29 @@ export default function App() {
     setTimeout(() => submitQuery(text), 0);
   };
 
+  const handleEditSubmit = async (idx, newText) => {
+    if (!newText.trim()) {
+      setEditingIndex(null);
+      return;
+    }
+    // Truncate messages up to the edited message
+    const truncatedMessages = messages.slice(0, idx);
+    setMessages(truncatedMessages);
+    setEditingIndex(null);
+    // Wait for state to settle, then submit
+    setTimeout(() => submitQuery(newText), 50);
+  };
+
   const submitQuery = useCallback(async (text) => {
     const q = text.trim();
     if (!q || isLoading) return;
+
+    // Detect if this is a follow-up within an existing session
+    const currentThesis = getLatestThesis();
+    const isFollowUp = chatStarted && activeChat && !!currentThesis;
+    const currentChatKey = isFollowUp ? activeChat : q;
+    // Grab the plain thesis text to send as context
+    const thesisContext = isFollowUp && currentThesis ? currentThesis.content : null;
 
     setChatStarted(true);
     setIsLoading(true);
@@ -237,21 +298,19 @@ export default function App() {
       { role: 'assistant', content: '', results: [], sessionId: null },
     ]);
 
-    // Track this as the active chat
-    setActiveChat(q);
+    if (!isFollowUp) {
+      setActiveChat(q);
+      const newRecents = [
+        { text: q, time: timeStr(), messages: [] },
+        ...recentQueries.filter(r => r.text !== q)
+      ];
+      setRecentQueries(newRecents);
+      localStorage.setItem('thesisai_recent', JSON.stringify(newRecents));
+    }
 
-    // Save to recents — messages will be updated once the query finishes
-    const newRecents = [
-      { text: q, time: timeStr(), messages: [] },
-      ...recentQueries.filter(r => r.text !== q)
-    ];
-    setRecentQueries(newRecents);
-    localStorage.setItem('thesisai_recent', JSON.stringify(newRecents));
-
-    // Helper: persist final messages into the matching recent entry
     const persistMessages = (finalMessages) => {
       setRecentQueries(prev => {
-        const updated = prev.map(r => r.text === q ? { ...r, messages: finalMessages } : r);
+        const updated = prev.map(r => r.text === currentChatKey ? { ...r, messages: finalMessages } : r);
         localStorage.setItem('thesisai_recent', JSON.stringify(updated));
         return updated;
       });
@@ -261,7 +320,13 @@ export default function App() {
       const res = await fetch(`${BACKEND_URL}/api/query`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: q, filters: filters, sources: sources }),
+        body: JSON.stringify({
+          query: q,
+          filters: filters,
+          sources: (isFollowUp && !sourcesEnabled) ? [] : sources,
+          is_followup: isFollowUp,
+          thesis_context: thesisContext,
+        }),
       });
 
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -291,11 +356,11 @@ export default function App() {
             else if (data.type === 'result') { updateLast(p => ({ ...p, results: data.results || [] })); setStage(''); }
             else if (data.type === 'token') { updateLast(p => ({ ...p, content: p.content + data.content })); }
             else if (data.type === 'done') {
-              updateLast(p => ({ ...p, sessionId: data.session_id }));
+              // Follow-up responses must NOT overwrite the thesis (no sessionId)
+              updateLast(p => ({ ...p, sessionId: isFollowUp ? null : data.session_id }));
               setStage('');
               setIsLoading(false);
               setSplitView(true);
-              // Persist finished messages into history
               setMessages(prev => { persistMessages(prev); return prev; });
             }
             else if (data.type === 'error') { setStage(`Error: ${data.message}`); setIsLoading(false); }
@@ -546,42 +611,90 @@ export default function App() {
         {splitView && (() => {
           const thesis = getLatestThesis();
           if (!thesis) return null;
-          const displayContent = thesisEditMode ? thesisEditContent : thesis.content;
           return (
             <div className="split-container" ref={splitContainerRef}>
 
               {/* ─── LEFT PANEL: Thesis Document ─── */}
               <div className="thesis-doc-panel" style={{ flex: `0 0 ${leftPanelWidth}%`, width: `${leftPanelWidth}%` }}>
-                {/* Document Toolbar */}
-                <div className="doc-toolbar">
-                  <div className="doc-toolbar-left">
-                    <select className="doc-style-select">
-                      <option>Normal Text</option>
-                      <option>Heading 1</option>
-                      <option>Heading 2</option>
-                      <option>Heading 3</option>
+
+                {/* Custom Quill Toolbar (Primary) */}
+                {thesisEditMode && (
+                  <div id="custom-toolbar" className="doc-toolbar-primary">
+                    <select className="ql-header" defaultValue="">
+                      <option value="1">Heading 1</option>
+                      <option value="2">Heading 2</option>
+                      <option value="3">Heading 3</option>
+                      <option value="">Normal Text</option>
                     </select>
-                    <div className="doc-format-btns">
-                      <button className="doc-fmt-btn" title="Bold"><b>B</b></button>
-                      <button className="doc-fmt-btn" title="Italic"><i>I</i></button>
-                      <button className="doc-fmt-btn" title="Underline" style={{textDecoration:'underline'}}>U</button>
-                      <button className="doc-fmt-btn" title="Code">&lt;&gt;</button>
-                      <span className="doc-fmt-divider"/>
-                      <button className="doc-fmt-btn" title="Link">🔗</button>
+                    <span className="ql-divider"></span>
+                    <button className="ql-bold"></button>
+                    <button className="ql-italic"></button>
+                    <button className="ql-underline"></button>
+                    <button className="ql-code-block"></button>
+                    <span className="ql-divider"></span>
+                    <select className="ql-align"></select>
+                    <span className="ql-divider"></span>
+                    <button className="ql-list" value="ordered"></button>
+                    <button className="ql-list" value="bullet"></button>
+                    <span className="ql-divider"></span>
+                    <button className="ql-link"></button>
+                    <button className="ql-image"></button>
+
+                    {/* Custom + Dropdown Menu */}
+                    <div className="insert-dropdown-container"
+                      onMouseEnter={() => setInsertMenuOpen(true)}
+                      onMouseLeave={() => setInsertMenuOpen(false)}>
+                      <button className="insert-plus-btn">+</button>
+                      {insertMenuOpen && (
+                        <div className="insert-dropdown-menu">
+                          <button className="ql-list" value="bullet">Bullet List</button>
+                          <button className="ql-list" value="ordered">Numbered List</button>
+                          <button className="ql-image">Insert Image</button>
+                          <button className="ql-link">Insert Link</button>
+                        </div>
+                      )}
                     </div>
                   </div>
-                  <div className="doc-toolbar-right">
+                )}
+
+                {/* Secondary Action Bar */}
+                <div className="doc-toolbar-secondary">
+                  <div className="action-bar-left">
+                    {thesisEditMode && (
+                      <select className="style-select-dropdown">
+                        <option>Style: IEEE</option>
+                        <option>Style: APA</option>
+                        <option>Style: MLA</option>
+                      </select>
+                    )}
+                    <button className="action-btn-styled" onClick={() => handleCopyThesis(thesis.content)}>
+                      <span className="icon-copy">📄</span> Copy
+                    </button>
+                    <button className="action-btn-styled">
+                      <span className="icon-share">↗️</span> Share
+                    </button>
+                    {thesisEditMode && (
+                      <button className="action-btn-styled">
+                        <span className="icon-reformat">🔄</span> Reformat
+                      </button>
+                    )}
+                    <button className="action-btn-styled" onClick={() => handleDownload(thesis.content, thesis.sessionId)}>
+                      <span className="icon-export">⬇️</span> Export
+                    </button>
+                  </div>
+
+                  <div className="action-bar-right">
                     {thesisEditMode ? (
                       <>
-                        <span className="doc-edit-badge">Editing…</span>
                         <button className="doc-action-btn primary" onClick={() => {
-                          const editableDiv = document.getElementById('thesis-editable');
-                          const updatedContent = editableDiv ? editableDiv.innerText : thesisEditContent;
+                          const turndownService = new TurndownService({ headingStyle: 'atx' });
+                          const markdownContent = turndownService.turndown(thesisEditContent);
+
                           setMessages(prev => {
                             const next = [...prev];
                             for (let i = next.length - 1; i >= 0; i--) {
                               if (next[i].role === 'assistant' && next[i].sessionId) {
-                                next[i] = { ...next[i], content: updatedContent };
+                                next[i] = { ...next[i], content: markdownContent };
                                 break;
                               }
                             }
@@ -592,37 +705,44 @@ export default function App() {
                         <button className="doc-action-btn" onClick={() => setThesisEditMode(false)}>✕ Cancel</button>
                       </>
                     ) : (
-                      <>
-                        <button className="doc-action-btn" title="Click Edit, then click anywhere in the document to edit" onClick={() => {
-                          setThesisEditContent(thesis.content);
-                          setThesisEditMode(true);
-                          setTimeout(() => {
-                            const el = document.getElementById('thesis-editable');
-                            if (el) { el.focus(); }
-                          }, 50);
-                        }}>✏️ Edit</button>
-                        <button className="doc-action-btn" title="Copy thesis" onClick={() => handleCopyThesis(thesis.content)}>📋 Copy</button>
-                        <button className="doc-action-btn primary" onClick={() => handleDownload(thesis.content, thesis.sessionId)}>⬇ Download</button>
-                      </>
+                      <button className="doc-action-btn" title="Click Edit, then click anywhere in the document to edit" onClick={() => {
+                        const htmlContent = marked.parse(thesis.content);
+                        setThesisEditContent(htmlContent);
+                        setThesisEditMode(true);
+                      }}>✏️ Edit</button>
                     )}
                   </div>
                 </div>
 
-
                 {/* Document Body */}
                 <div className={`thesis-doc-body${thesisEditMode ? ' thesis-edit-active' : ''}`} ref={thesisRef}>
-                  <div
-                    id="thesis-editable"
-                    className={`thesis-doc-content${thesisEditMode ? ' thesis-doc-editable' : ''}`}
-                    contentEditable={thesisEditMode}
-                    suppressContentEditableWarning
-                    spellCheck={thesisEditMode}
-                    onInput={(e) => setThesisEditContent(e.currentTarget.innerText)}
-                  >
-                    <ReactMarkdown rehypePlugins={[rehypeRaw]}>
-                      {thesis.content.replace(/\[(\d+)\](?!\()/g, '<span class="cite-chip">[$1]</span>')}
-                    </ReactMarkdown>
-                  </div>
+                  {thesisEditMode ? (
+                    <ReactQuill
+                      theme="snow"
+                      value={thesisEditContent}
+                      onChange={setThesisEditContent}
+                      modules={{
+                        toolbar: { container: '#custom-toolbar' }
+                      }}
+                      style={{ height: '100%', minHeight: '500px' }}
+                    />
+                  ) : (
+                    <div className="thesis-doc-content">
+                      <ReactMarkdown
+                        remarkPlugins={[remarkGfm]}
+                        rehypePlugins={[rehypeRaw]}
+                        urlTransform={(url) => {
+                          if (url.startsWith('data:image/')) return url;
+                          return defaultUrlTransform(url);
+                        }}
+                      >
+                        {thesis.content
+                          .replace(/&nbsp;/g, ' ')
+                          .replace(/^[ \t]+(https?:\/\/)/gm, '$1')
+                          .replace(/\[(\d+)\](?!\()/g, '<span class="cite-chip">[$1]</span>')}
+                      </ReactMarkdown>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -633,16 +753,16 @@ export default function App() {
                 title="Drag to resize panels"
               >
                 <div className="panel-resizer-handle">
-                  <span/><span/><span/><span/><span/>
+                  <span /><span /><span /><span /><span />
                 </div>
               </div>
 
               {/* ─── RIGHT PANEL: Sources + Chat ─── */}
-              <div className="sources-chat-panel" style={{ flex: `0 0 ${100 - leftPanelWidth}%`, width: `${100 - leftPanelWidth}%` }}>
+              <div className="sources-chat-panel" style={{ flex: '1 1 0%', minWidth: 0 }} ref={rightPanelRef}>
 
                 {/* Sources section */}
                 {thesis.results && thesis.results.length > 0 && (
-                  <div className="right-sources-section">
+                  <div className="right-sources-section" style={{ flex: `0 0 ${topPanelHeight}%`, height: `${topPanelHeight}%`, overflow: 'hidden' }}>
                     <div className="sources-header">
                       📄 Research Sources
                       <span className="sources-count">{thesis.results.length} found</span>
@@ -651,7 +771,7 @@ export default function App() {
                       {thesis.results.map((r, i) => (
                         <div key={i} className="source-card source-card-compact">
                           <div className="src-header-row">
-                            <span className="src-badge">[{r.index}] {r.source}</span>
+                            <span className="src-badge">[{r.index}] {r.url ? domainOf(r.url).toUpperCase() : r.source}</span>
                             {r.year && <span className="src-year">{r.year}</span>}
                           </div>
                           <div className="src-title">
@@ -669,49 +789,165 @@ export default function App() {
                   </div>
                 )}
 
-                {/* Follow-up chat messages */}
-                <div className="right-chat-messages" ref={contentRef} onScroll={handleScroll}>
-                  {messages.filter(m => m.role === 'user' || (m.role === 'assistant' && !m.sessionId)).map((msg, idx) => (
-                    <div key={idx}>
-                      {msg.role === 'user' && (
-                        <div className="right-user-msg">{msg.content}</div>
-                      )}
-                      {msg.role === 'assistant' && msg.content && !msg.sessionId && (
-                        <div className="right-assistant-msg">
-                          <ReactMarkdown rehypePlugins={[rehypeRaw]}>{msg.content}</ReactMarkdown>
-                        </div>
-                      )}
+                {/* ─── VERTICAL RESIZER (only when sources visible) ─── */}
+                {thesis.results && thesis.results.length > 0 && (
+                  <div
+                    className="v-panel-resizer"
+                    onMouseDown={handleVResizerMouseDown}
+                    title="Drag to resize"
+                  >
+                    <div className="v-panel-resizer-handle">
+                      <span /><span /><span /><span /><span />
                     </div>
-                  ))}
-                  {stage && isLoading && (
-                    <div className="stage-line">
-                      <span className="stage-dot" /><span>{stage}</span>
-                    </div>
-                  )}
-                  <div ref={chatEndRef} />
-                </div>
+                  </div>
+                )}
 
-                {/* Docked follow-up composer */}
-                <div className="right-composer">
-                  <textarea
-                    id="rightQueryInput"
-                    className="right-composer-textarea"
-                    placeholder="Ask a follow-up question or request an edit…"
-                    rows="2"
-                    value={query}
-                    onChange={e => setQuery(e.target.value)}
-                    onKeyDown={handleKey}
-                  />
-                  <div className="right-composer-actions">
-                    <div className="toolbar-left" style={{gap:'6px'}}>
-                      <button className={`toolbar-btn ${sources.includes('papers') ? 'selected' : ''}`} onClick={() => toggleSource('papers')}>📄 Papers</button>
-                      <button className={`toolbar-btn ${sources.includes('web') ? 'selected' : ''}`} onClick={() => toggleSource('web')}>🌐 Web</button>
-                    </div>
+                {/* Chat section: messages + always-visible composer */}
+                <div className="right-chat-section" style={{ flex: '1 1 0%', minHeight: 0 }}>
+
+                  {/* Follow-up chat messages */}
+                  <div className="right-chat-messages" ref={contentRef} onScroll={handleScroll}>
+                    {messages.map((msg, idx) => {
+                      // Skip the initial thesis prompt (first user message)
+                      if (idx === 0 && msg.role === 'user') return null;
+                      // Skip the generated thesis itself (assistant message with sessionId)
+                      if (msg.role === 'assistant' && msg.sessionId) return null;
+
+                      return (
+                        <div key={idx}>
+                          {msg.role === 'user' && (
+                            <div className="right-user-msg-container" style={{ position: 'relative' }}>
+                              {editingIndex === idx ? (
+                                <div className="edit-message-box">
+                                  <textarea
+                                    className="edit-message-textarea"
+                                    value={editDraft}
+                                    onChange={(e) => setEditDraft(e.target.value)}
+                                    autoFocus
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter' && !e.shiftKey) {
+                                        e.preventDefault();
+                                        handleEditSubmit(idx, editDraft);
+                                      } else if (e.key === 'Escape') {
+                                        setEditingIndex(null);
+                                      }
+                                    }}
+                                  />
+                                  <div className="edit-message-actions">
+                                    <button className="edit-btn cancel" onClick={() => setEditingIndex(null)}>Cancel</button>
+                                    <button className="edit-btn save" onClick={() => handleEditSubmit(idx, editDraft)}>Save & Submit</button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="right-user-msg msg-wrapper">
+                                  <button
+                                    className="msg-edit-btn"
+                                    title="Edit query"
+                                    onClick={() => {
+                                      setEditingIndex(idx);
+                                      setEditDraft(msg.content);
+                                    }}
+                                  >
+                                    ✏️
+                                  </button>
+                                  {msg.content}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                          {msg.role === 'assistant' && msg.content && (
+                            <div className="right-assistant-msg">
+                              <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>{msg.content}</ReactMarkdown>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                    {stage && isLoading && (
+                      <div className="stage-line">
+                        <span className="stage-dot" /><span>{stage}</span>
+                      </div>
+                    )}
+                    <div ref={chatEndRef} />
+                  </div>
+
+                  {/* Scroll-to-bottom FAB — only when content is hidden below */}
+                  {showScrollDown && (
                     <button
-                      className="send-btn"
-                      onClick={() => submitQuery(query)}
-                      disabled={isLoading || !query.trim()}
-                    >↑</button>
+                      className="chat-scroll-fab"
+                      onClick={() => {
+                        chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+                        setShowScrollDown(false);
+                      }}
+                      title="Scroll to bottom"
+                    >↓</button>
+                  )}
+
+                  {/* Docked follow-up composer — always visible */}
+                  <div className="right-composer">
+                    <textarea
+                      id="rightQueryInput"
+                      className="right-composer-textarea"
+                      placeholder="Ask a follow-up question or request an edit…"
+                      rows="2"
+                      value={query}
+                      onChange={e => setQuery(e.target.value)}
+                      onKeyDown={handleKey}
+                    />
+                    <div className="right-composer-actions">
+                      <div className="toolbar-left" style={{ gap: '12px' }}>
+                        <div className="sources-menu-container" style={{ position: 'relative' }}>
+                          {/* The toggle and Sources button */}
+                          <div
+                            className="sources-toggle-btn"
+                            onClick={() => setIsSourcesMenuOpen(!isSourcesMenuOpen)}
+                          >
+                            <div
+                              className={`toggle-switch ${sourcesEnabled ? 'on' : 'off'}`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSourcesEnabled(!sourcesEnabled);
+                              }}
+                            >
+                              <div className="toggle-thumb" />
+                            </div>
+                            <span className="sources-label">Sources</span>
+                            <span className="sources-chevron">{isSourcesMenuOpen ? '⌄' : '⌃'}</span>
+                          </div>
+
+                          {/* The Popover Menu */}
+                          {isSourcesMenuOpen && (
+                            <div className="sources-popover-menu">
+                              <div
+                                className="popover-item"
+                                onClick={() => toggleSource('papers')}
+                              >
+                                📑 Papers {sources.includes('papers') && <span className="check">✓</span>}
+                              </div>
+                              <div
+                                className="popover-item"
+                                onClick={() => toggleSource('web')}
+                              >
+                                🌐 Internet {sources.includes('web') && <span className="check">✓</span>}
+                              </div>
+                              <div className="popover-item">
+                                📁 Library
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Additional tool buttons */}
+                        <button className="icon-btn" title="Attach file">📎</button>
+                        <button className="icon-btn" title="Filters" onClick={() => setIsFilterOpen(true)}>⚙</button>
+                      </div>
+
+                      <button
+                        className="send-btn"
+                        onClick={() => submitQuery(query)}
+                        disabled={isLoading || !query.trim()}
+                      >↑</button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -778,19 +1014,14 @@ export default function App() {
                           </div>
                         ) : (
                           <>
-                            {msg.content === '' && stage && (
-                              <div className="stage-line">
-                                <span className="stage-dot" />
-                                <span className="stage-text">{stage}</span>
-                              </div>
-                            )}
+
                             {msg.results && msg.results.length > 0 && (
                               <>
                                 <div className="sources-header">📄 Research Sources <span className="sources-count">{msg.results.length} found</span></div>
                                 <div className="sources-grid">
                                   {msg.results.map((r, i) => (
                                     <div key={i} className="source-card">
-                                      <span className="src-badge">[{r.index}] {r.source}</span>
+                                      <span className="src-badge">[{r.index}] {r.url ? domainOf(r.url).toUpperCase() : r.source}</span>
                                       <div className="src-title">{r.url ? <a href={r.url} target="_blank" rel="noopener noreferrer">{r.title || r.url}</a> : (r.title || 'Untitled')}</div>
                                       {r.snippet && <div className="src-snippet">{r.snippet.slice(0, 160)}…</div>}
                                       {r.url && <div className="src-url">{domainOf(r.url)}</div>}
@@ -801,8 +1032,11 @@ export default function App() {
                             )}
                             {msg.content && (
                               <div className="msg-assistant">
-                                <ReactMarkdown rehypePlugins={[rehypeRaw]}>
-                                  {msg.content.replace(/\[(\d+)\](?!\()/g, '<span class="cite-chip">[$1]</span>')}
+                                <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
+                                  {msg.content
+                                    .replace(/&nbsp;/g, ' ')
+                                    .replace(/^[ \t]+(https?:\/\/)/gm, '$1')
+                                    .replace(/\[(\d+)\](?!\()/g, '<span class="cite-chip">[$1]</span>')}
                                 </ReactMarkdown>
                               </div>
                             )}
