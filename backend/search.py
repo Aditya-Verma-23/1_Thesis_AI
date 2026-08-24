@@ -1,21 +1,40 @@
 """Web search engine integration: DuckDuckGo + Google, run concurrently.
 
-Pattern taken directly from the user's Google.txt reference file.
 Both engines run in threads (asyncio.to_thread) so the FastAPI event
 loop is never blocked. Results are merged and deduplicated by URL.
+
+Upgrade (v2):
+- Smart HTML extraction: prefers <article>, <main>, <section> tags
+- User-Agent header to bypass lightweight bot-blocking
+- 12 000-char content limit per source (was 6 000)
+- Per-URL scrape progress callback for real-time SSE feedback
+- Single retry on transient connection/SSL failures
+- 10-second scrape timeout per URL (was 6 s)
 """
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable, Awaitable
+from typing import Optional
+
 import httpx
 from bs4 import BeautifulSoup
 from loguru import logger
 
 from models import SearchResult
 
-MAX_PER_ENGINE = 7   # fetch more than 10 so dedup still yields 10
-TOTAL_RESULTS  = 10
-TIMEOUT_S      = 20
+MAX_PER_ENGINE  = 8    # fetch a few extra so dedup still yields the target
+TOTAL_RESULTS   = 8    # default top-N returned
+SCRAPE_TIMEOUT  = 10.0 # seconds per URL
+SCRAPE_MAX_CHARS = 12_000  # chars of page text fed to LLM per source
+SEARCH_TIMEOUT  = 25   # seconds for the whole search gather
+
+# Realistic browser User-Agent header
+_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/124.0.0.0 Safari/537.36"
+)
 
 
 # ── Synchronous helpers (executed in thread-pool) ─────────────────────────────
@@ -37,6 +56,7 @@ def _ddg_sync(query: str, max_results: int) -> list[dict]:
     except Exception as exc:
         logger.warning(f"DuckDuckGo failed: {exc}")
         return []
+
 
 def _ddg_images_sync(query: str, max_results: int) -> list[str]:
     """DuckDuckGo image search using the ddgs package."""
@@ -71,43 +91,101 @@ def _google_sync(query: str, max_results: int) -> list[dict]:
         logger.warning(f"Google search failed: {exc}")
         return []
 
+
+# ── Smart HTML text extractor ─────────────────────────────────────────────────
+
+def _extract_text(html: bytes) -> str:
+    """
+    Extract the most content-rich text from raw HTML.
+
+    Priority order:
+      1. <article> — blog posts, papers, Wikipedia articles
+      2. <main>    — standard semantic landmark
+      3. <div id/class containing "content","article","body","post">
+      4. Full page fallback (minus boilerplate tags)
+    """
+    soup = BeautifulSoup(html, "html.parser")
+
+    # Remove boilerplate elements
+    for tag in soup(["script", "style", "nav", "header", "footer",
+                      "aside", "form", "noscript", "svg", "iframe"]):
+        tag.decompose()
+
+    # Try semantic / structural candidates first
+    candidates = (
+        soup.find("article")
+        or soup.find("main")
+        or soup.find(id=lambda v: v and any(k in v.lower() for k in ("content", "article", "body", "post", "entry")))
+        or soup.find(class_=lambda v: v and any(k in " ".join(v).lower() for k in ("content", "article", "body", "post", "entry")))
+    )
+
+    root = candidates if candidates else soup.body or soup
+
+    text = root.get_text(separator=" ", strip=True)
+    # Collapse runs of whitespace
+    import re
+    text = re.sub(r"\s{2,}", " ", text)
+    return text[:SCRAPE_MAX_CHARS]
+
+
+# ── Async URL scraper with retry ──────────────────────────────────────────────
+
 async def _scrape_url(url: str) -> str:
-    """Fetch and extract main text from a URL."""
+    """Fetch and extract main text from a URL. Retries once on failure."""
     if not url or not url.startswith("http"):
         return ""
-    try:
-        async with httpx.AsyncClient(verify=False, timeout=6.0) as client:
-            resp = await client.get(url, follow_redirects=True)
-            resp.raise_for_status()
-            soup = BeautifulSoup(resp.content, "html.parser")
-            # Remove scripts and styles
-            for script in soup(["script", "style", "nav", "header", "footer"]):
-                script.decompose()
-            text = soup.get_text(separator=" ", strip=True)
-            # Take up to 6000 chars to avoid blowing up the context window
-            return text[:6000]
-    except Exception as exc:
-        logger.debug(f"Failed to scrape {url}: {exc}")
-        return ""
+
+    headers = {"User-Agent": _UA, "Accept-Language": "en-US,en;q=0.9"}
+
+    for attempt in range(2):  # try twice
+        try:
+            async with httpx.AsyncClient(
+                verify=False,
+                timeout=SCRAPE_TIMEOUT,
+                follow_redirects=True,
+                headers=headers,
+            ) as client:
+                resp = await client.get(url)
+                resp.raise_for_status()
+                return _extract_text(resp.content)
+        except Exception as exc:
+            if attempt == 0:
+                logger.debug(f"Scrape attempt 1 failed for {url}: {exc} — retrying…")
+                await asyncio.sleep(0.5)
+            else:
+                logger.debug(f"Scrape failed for {url}: {exc}")
+    return ""
+
 
 # ── Public async function ──────────────────────────────────────────────────────
 
-async def search_papers(query: str, sources: list[str] | None = None, filters: dict | None = None) -> list[SearchResult]:
-    """Search DuckDuckGo + Google concurrently, return top-10 deduped results."""
+async def search_papers(
+    query: str,
+    sources: list[str] | None = None,
+    filters: dict | None = None,
+    progress_cb: Optional[Callable[[int, int, str], Awaitable[None]]] = None,
+) -> list[SearchResult]:
+    """
+    Search DuckDuckGo + Google concurrently, scrape each result's full page,
+    and return the top-N deduplicated results.
 
+    Args:
+        progress_cb: async callable(current, total, title) called after each
+                     URL is scraped so the caller can stream SSE progress.
+    """
     sources = sources or ["papers", "web"]
     filters = filters or {}
-    
-    # The user expects the "minCitations" value to dictate the total number of fetched sites
-    total_results = filters.get("minCitations", 10)
+
+    # Determine how many results to fetch
+    total_results = filters.get("minCitations", TOTAL_RESULTS)
     if total_results <= 0:
-        total_results = 10
-    
+        total_results = TOTAL_RESULTS
+
     max_per_engine = total_results + 5
-    
-    sites = []
-    
-    # Process papers database filters
+
+    sites: list[str] = []
+
+    # Academic DB site filters
     if "papers" in sources:
         db_papers = filters.get("dbPapers", {})
         if db_papers.get("arxiv"):
@@ -118,12 +196,20 @@ async def search_papers(query: str, sources: list[str] | None = None, filters: d
             sites.append("clinicaltrials.gov")
         if db_papers.get("semanticScholar"):
             sites.append("semanticscholar.org")
-            
-        # Default academic sites if no specific DB is checked, or if we just want a broad academic search
-        if not sites or (db_papers.get("semanticScholar") and db_papers.get("openAlex") and not db_papers.get("pubmed") and not db_papers.get("arxiv")):
-            sites.extend(["scholar.google.com", "arxiv.org", "researchgate.net", "academia.edu", "ncbi.nlm.nih.gov", "jstor.org"])
 
-    # Process web database filters
+        # Default academic sites when no specific DB is checked
+        if not sites or (
+            db_papers.get("semanticScholar")
+            and db_papers.get("openAlex")
+            and not db_papers.get("pubmed")
+            and not db_papers.get("arxiv")
+        ):
+            sites.extend([
+                "scholar.google.com", "arxiv.org", "researchgate.net",
+                "academia.edu", "ncbi.nlm.nih.gov", "jstor.org",
+            ])
+
+    # Web DB filters
     if "web" in sources:
         db_web = filters.get("dbWeb", {})
         if db_web.get("gov"):
@@ -131,76 +217,93 @@ async def search_papers(query: str, sources: list[str] | None = None, filters: d
         if db_web.get("edu"):
             sites.append(".edu")
 
-    # Construct the final academic query
-    academic_query = query
-    
-    pub_types = filters.get("pubTypes", {})
-    if pub_types.get("review"):
-        academic_query += ' "review"'
-    if pub_types.get("preprint"):
-        academic_query += ' "preprint"'
+    # ── Build queries ─────────────────────────────────────────────────────────
+    queries_to_run = []
+
+    # 1. Academic query (if papers selected)
+    if "papers" in sources:
+        paper_query = query
+        pub_types = filters.get("pubTypes", {})
+        if pub_types.get("review"):
+            paper_query += ' "review"'
+        if pub_types.get("preprint"):
+            paper_query += ' "preprint"'
+
+        dates = filters.get("dates", {})
+        if dates.get("start"):
+            paper_query += f' after:{dates["start"][:4]}'
+        if dates.get("end"):
+            paper_query += f' before:{dates["end"][:4]}'
+
+        # Filter to specific academic sites if any were selected
+        academic_sites = [s for s in sites if not s.startswith(".")] # .gov, .edu are handled by web
+        if academic_sites:
+            site_str = " OR ".join([f"site:{s}" for s in set(academic_sites)])
+            paper_query = f"{paper_query} {site_str}"
+        else:
+            paper_query = f"{paper_query} research paper thesis"
+
+        queries_to_run.append(paper_query)
+
+    # 2. Web query (if web selected)
+    if "web" in sources:
+        web_query = query
+        web_sites = [s for s in sites if s.startswith(".")] # .gov, .edu
         
-    dates = filters.get("dates", {})
-    if dates.get("start"):
-        academic_query += f' after:{dates["start"][:4]}'
-    if dates.get("end"):
-        academic_query += f' before:{dates["end"][:4]}'
+        # Check if we should restrict to specific web domains or allow all
+        db_web = filters.get("dbWeb", {})
+        if web_sites and not db_web.get("all", True):
+            site_str = " OR ".join([f"site:{s}" for s in set(web_sites)])
+            web_query = f"{web_query} {site_str}"
+            
+        queries_to_run.append(web_query)
 
-    min_citations = filters.get("minCitations", 0)
-    if min_citations > 0:
-        academic_query += f' "cited by {min_citations}"'
+    # If neither (shouldn't happen, but fallback)
+    if not queries_to_run:
+        queries_to_run.append(query)
 
-    journal_quality = filters.get("journalQuality", 4)
-    if journal_quality == 0:
-        academic_query += ' "Q1 journal"'
-    elif journal_quality == 1:
-        academic_query += ' "Q2 journal"'
-    elif journal_quality == 2:
-        academic_query += ' "Q3 journal"'
-
-    if sites:
-        # Build OR'd site list: site:arxiv.org OR site:ncbi.nlm.nih.gov
-        site_str = " OR ".join([f"site:{s}" for s in set(sites)])
-        academic_query = f"{academic_query} {site_str}"
-    else:
-        academic_query = f"{academic_query} research paper thesis"
+    # ── Run search engines concurrently for all queries ─────────────────────
+    tasks = []
+    
+    # Half the results from DDG, half from Google for each query
+    # and we fetch images using the base query
+    for q in queries_to_run:
+        tasks.append(asyncio.to_thread(_ddg_sync, q, max_per_engine))
+        tasks.append(asyncio.to_thread(_google_sync, q, max_per_engine))
+        
+    tasks.append(asyncio.to_thread(_ddg_images_sync, query, 3))
 
     try:
-        ddg_raw, google_raw, ddg_images = await asyncio.wait_for(
-            asyncio.gather(
-                asyncio.to_thread(_ddg_sync, academic_query, max_per_engine),
-                asyncio.to_thread(_google_sync, academic_query, max_per_engine),
-                asyncio.to_thread(_ddg_images_sync, academic_query, 3),
-                return_exceptions=True,
-            ),
-            timeout=TIMEOUT_S,
+        results_gather = await asyncio.wait_for(
+            asyncio.gather(*tasks, return_exceptions=True),
+            timeout=SEARCH_TIMEOUT,
         )
     except asyncio.TimeoutError:
         logger.warning("Search timed out")
         return []
 
-    if isinstance(ddg_raw, Exception):
-        logger.warning(f"DDG gather error: {ddg_raw}")
-        ddg_raw = []
-    if isinstance(google_raw, Exception):
-        logger.warning(f"Google gather error: {google_raw}")
-        google_raw = []
-    if isinstance(ddg_images, Exception):
-        logger.warning(f"DDG Images gather error: {ddg_images}")
-        ddg_images = []
+    # The last task is the images, the rest are text searches
+    text_results_raw = results_gather[:-1]
+    ddg_images_raw = results_gather[-1]
 
-    # Merge: DuckDuckGo first (has snippets), Google second
+    ddg_images = ddg_images_raw if not isinstance(ddg_images_raw, Exception) else []
+    
+    # ── Merge & dedup ──────────────────
     seen: set[str] = set()
     merged: list[SearchResult] = []
 
-    for raw_list in (ddg_raw, google_raw):
+    for raw_list in text_results_raw:
+        if isinstance(raw_list, Exception):
+            logger.warning(f"Search gather error: {raw_list}")
+            continue
+            
         for r in raw_list:
             url = (r.get("url") or "").strip()
             if not url or url in seen:
                 continue
             seen.add(url)
             merged.append(SearchResult(
-                index   = 0,          # assigned below
+                index   = 0,   # assigned below
                 title   = r.get("title") or "Untitled",
                 url     = url,
                 snippet = (r.get("snippet") or "")[:500],
@@ -215,16 +318,21 @@ async def search_papers(query: str, sources: list[str] | None = None, filters: d
     img_idx = 0
     for i, sr in enumerate(merged, start=1):
         sr.index = i
-        if img_idx < len(ddg_images) and img_idx < 3: # limit to top 3 images
+        if img_idx < len(ddg_images) and img_idx < 3:
             sr.image_url = ddg_images[img_idx]
             img_idx += 1
-            
-    # Concurrently scrape the full text for all top results
-    scrape_tasks = [_scrape_url(sr.url) for sr in merged[:total_results]]
-    scraped_texts = await asyncio.gather(*scrape_tasks, return_exceptions=True)
-    
-    for sr, text in zip(merged[:total_results], scraped_texts):
-        if isinstance(text, str) and text:
+
+    # ── Scrape each URL sequentially so we can emit per-URL progress ─────────
+    total = len(merged[:total_results])
+    for idx, sr in enumerate(merged[:total_results], start=1):
+        logger.info(f"Scraping {idx}/{total}: {sr.url}")
+
+        # Notify caller (SSE) before scraping starts for this URL
+        if progress_cb:
+            await progress_cb(idx, total, sr.title or sr.url or "")
+
+        text = await _scrape_url(sr.url or "")
+        if text:
             sr.full_text = text
 
     return merged[:total_results]

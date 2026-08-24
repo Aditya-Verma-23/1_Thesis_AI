@@ -56,7 +56,7 @@ async def suggest_alternative_topics(query: str) -> list[str]:
 SYSTEM_PROMPT = """\
 You are ThesisAI, an expert academic writing assistant.
 
-Given a research question and a numbered list of sources (each with their URL and full content), \
+Given a research question and a numbered list of sources (each with their URL and full page content),
 write a comprehensive, highly detailed academic thesis paper.
 
 ═══ STRICT FORMATTING RULES ═══
@@ -74,34 +74,50 @@ write a comprehensive, highly detailed academic thesis paper.
     ## Conclusion
     ## References
 
-3.  CITATIONS: Every factual claim MUST be followed by an inline citation in brackets, e.g. [1] or [2].
-    - Never write a paragraph without at least one citation.
-    - Do not cluster all citations at the end of a paragraph; sprinkle them throughout.
+3.  CITATIONS — MANDATORY RULES:
+    - Every single factual claim MUST be followed immediately by an inline citation [N].
+    - EVERY source provided ([1], [2], … [N]) MUST be cited at least ONCE in the body text.
+    - Do not cluster citations at paragraph ends — sprinkle them inline throughout.
+    - Never write two consecutive sentences without a citation.
+    - After writing the paper, mentally scan the text: if any source index is missing, add it.
 
-4.  LENGTH: Write AT LEAST 1200 words of body text. Each section (except Abstract and Conclusion) \
-must have at least 2–3 substantial paragraphs.
+4.  LENGTH — MINIMUM WORD COUNTS PER SECTION:
+    - Abstract:              150–250 words
+    - Introduction:          300+ words (2–3 paragraphs)
+    - Literature Review:     400+ words (3–4 paragraphs with thematic sub-organisation)
+    - Methodology:           250+ words
+    - Analysis and Findings: 400+ words (include at least one table or ASCII diagram)
+    - Discussion:            300+ words
+    - Conclusion:            150–200 words
+    Total body text: AT LEAST 1 500 words.
 
-5.  REFERENCES section at the end — use this EXACT format for each entry on its OWN line:
+5.  REFERENCES section at the end — use this EXACT format, one entry per line with a blank line between:
     [[1]](URL) Title of the paper or page — URL
     [[2]](URL) Title of the paper or page — URL
-    …
-    The number [1], [2] etc. MUST be a clickable Markdown link pointing to the source URL.
-    Each reference MUST be on a separate line with a blank line between entries.
+    The number [1], [2] etc. MUST be a clickable Markdown link to the source URL.
+    Every source provided in the input MUST appear in the References section.
 
-6.  Do NOT use bullet points in the main sections — write in full, formal academic prose only.
+6.  Do NOT use bullet points in the main body sections — write in full, formal academic prose.
 
-7.  Do NOT invent facts or URLs not present in the sources provided.
+7.  Do NOT invent facts, statistics, or URLs not present in the sources provided.
+    If a source's content does not directly support a claim, cite a source that does.
 
-8.  DATA VISUALISATION: Where the sources discuss quantitative data, statistics, comparative findings, or processes, you MUST synthesise this into at least one Markdown Table or ASCII diagram to visually represent the research findings.
+8.  DATA VISUALISATION: Where sources discuss quantitative data, statistics, or comparative
+    findings you MUST create at least one Markdown Table to represent these findings.
 
-9.  IMAGES: If a source provides an "Image URL", you MUST embed it using Markdown `![Description of image](URL)` when discussing that source's findings to provide visual context.
+9.  IMAGES: If a source provides an "Image URL", embed it with Markdown
+    `![Description](URL)` when discussing that source's findings.
 
-═══ WRITING STYLE ═══
-- Formal, academic English.
-- The sources provided now contain EXTENSIVE FULL TEXT data. You MUST thoroughly analyse the specific details, methodologies, findings, and empirical evidence extracted from this full text, rather than writing surface-level summaries.
-- Connect ideas across sources — show synthesis, agreement, contradiction, and gaps.
-- The thematic sections in the Literature Review should be named descriptively \
-  (e.g. "Deep Learning Architectures for Disease Detection") not generically.\
+═══ WRITING QUALITY ═══
+- Formal, academic English throughout.
+- The full page content for each source is extensive — you MUST analyse specific details,
+  methodologies, empirical findings, and statistics from that content rather than
+  writing generic surface-level summaries.
+- Synthesise across sources: highlight agreement, contradiction, gaps, and evolution of ideas.
+- Name Literature Review sub-themes descriptively (e.g. "Neural Architectures for Disease
+  Prognosis") — never use generic names like "Theme 1".
+- The Discussion MUST compare findings across at least three sources and identify at least
+  one gap or limitation in the current literature.
 """
 
 
@@ -132,7 +148,9 @@ RULES:
 4. Use inline citations like [1], [2] when referencing facts from the new sources.
 5. Do NOT include a References section — the UI handles this automatically.
 6. Write in formal, academic English.
-7. If neither the thesis nor the new sources contain the answer, say so clearly and directly.
+7. Interpret vague pronouns (e.g., "it", "that", "this", "they") in the user's question as referring to the main topic of the THESIS CONTEXT.
+8. Actively use the THESIS CONTEXT to answer the question. If the NEW SOURCES are irrelevant to the question, ignore them and rely entirely on the THESIS CONTEXT.
+9. ONLY answer questions that are directly related to the main topic of the THESIS CONTEXT. If the user asks a question that is unrelated to the thesis topic, DO NOT answer it. Instead, reply politely saying: "This question does not appear to be related to the current research topic. Please ask a question related to the thesis."
 """
 
 
@@ -203,11 +221,14 @@ def _stream_chat_sync(query: str, sources_text: str, thesis_context: str | None)
     """Streaming helper for follow-up chat queries using thesis context."""
     thesis_block = ""
     if thesis_context:
-        # Truncate thesis context to avoid exceeding context window
-        truncated = thesis_context[:6000]
+        # Preserve more context (10 000 chars) for richer follow-up answers
+        truncated = thesis_context[:10_000]
         thesis_block = f"\n\n=== THESIS CONTEXT (the generated paper) ===\n{truncated}\n=== END THESIS CONTEXT ==="
 
     user_msg = (
+        f"CRITICAL INSTRUCTION: First, scan the THESIS CONTEXT below. Evaluate if the question '{query}' is related to the main topic of the THESIS CONTEXT.\n"
+        f"If the question is completely unrelated to the thesis topic (e.g. asking about unrelated people, random facts, or general chit-chat), you MUST NOT answer it. "
+        f"Instead, reply EXACTLY with: 'This question does not appear to be related to the current research topic. Please ask a question related to the thesis.'\n\n"
         f"User question: {query}"
         f"{thesis_block}\n\n"
         f"=== NEW SOURCES RETRIEVED FOR THIS QUESTION ===\n{sources_text}"
@@ -368,18 +389,47 @@ This thesis has formally synthesised current scholarly evidence on *"{query}"*. 
 # ── Public async streaming synthesizer ───────────────────────────────────────
 
 def _format_sources(results: list[SearchResult]) -> str:
+    """
+    Format sources for the LLM prompt.
+
+    Each entry includes:
+    - Index, title, and URL
+    - Optional image URL
+    - Smart-truncated full page content (10 000 chars), preserving headings
+    """
+    import re
+
+    SOURCE_MAX_CHARS = 10_000
+
+    def _smart_truncate(text: str, limit: int) -> str:
+        """Truncate text at a sentence/paragraph boundary near `limit`."""
+        if len(text) <= limit:
+            return text
+        # Try to cut at the last paragraph break before the limit
+        cut = text.rfind("\n\n", 0, limit)
+        if cut == -1:
+            # Fall back to last sentence-ending punctuation
+            cut = max(
+                text.rfind(". ", 0, limit),
+                text.rfind("! ", 0, limit),
+                text.rfind("? ", 0, limit),
+            )
+        return text[:cut + 1].strip() + " […content truncated…]" if cut > 0 else text[:limit]
+
     lines = []
     for r in results:
-        content = getattr(r, "full_text", "")
-        if not content or len(content.strip()) < 50:
+        content = getattr(r, "full_text", "").strip()
+        if not content or len(content) < 50:
             content = r.snippet
-            
+
+        content = _smart_truncate(content, SOURCE_MAX_CHARS)
+
         img_info = f"\nImage URL: {r.image_url}" if getattr(r, "image_url", None) else ""
-        
+
         lines.append(
             f"[{r.index}] {r.title}\n"
             f"URL: {r.url}{img_info}\n"
-            f"Content:\n{content}\n"
+            f"Content (scraped full page):\n{content}\n"
         )
     return "\n\n---\n\n".join(lines) if lines else "(no sources)"
 

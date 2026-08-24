@@ -8,7 +8,7 @@ function FilterPanel({ isOpen, onClose, sources, toggleSource, onFiltersChange }
   });
   const toggle = (key) => setExpanded(prev => ({ ...prev, [key]: !prev[key] }));
 
-  const [minCitations, setMinCitations] = useState(0);
+  const [minCitations, setMinCitations] = useState(10);
   const [journalQuality, setJournalQuality] = useState(4);
 
   const [pubTypes, setPubTypes] = useState({
@@ -16,7 +16,7 @@ function FilterPanel({ isOpen, onClose, sources, toggleSource, onFiltersChange }
   });
 
   const [dbPapers, setDbPapers] = useState({
-    semanticScholar: true, openAlex: true, pubmed: false, arxiv: false, clinicalTrials: false
+    semanticScholar: true, openAlex: true, pubmed: false, arxiv: true, clinicalTrials: false
   });
 
   const [dbWeb, setDbWeb] = useState({ all: true, gov: false, edu: false });

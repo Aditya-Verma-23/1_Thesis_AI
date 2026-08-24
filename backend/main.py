@@ -72,60 +72,76 @@ async def query(req: QueryRequest):
             # Stage 1: searching
             yield _sse(StreamEventType.STAGE, {"message": "🔎 Searching"})
 
-            # For follow-up queries, respect the selected sources (Papers = Thesis Context, Web = Internet Search)
+            # For follow-up queries, respect the selected sources
             results: list[SearchResult] = []
-            
+
+            # ── progress callback: emit per-URL scraping events ──────────
+            # We accumulate SSE strings in yield_queue inside the callback
+            # (which cannot yield directly) and drain it after each search call.
+            yield_queue: list[str] = []
+
+            async def _scrape_progress(current: int, total: int, title: str) -> None:
+                label = (title[:60] + "…") if len(title) > 60 else title
+                yield_queue.append(_sse(
+                    StreamEventType.SCRAPING,
+                    {"current": current, "total": total, "title": label},
+                ))
+
             if req.is_followup:
-                # If "web" is selected, fetch new internet sources
                 if "web" in req.sources:
                     yield _sse(StreamEventType.STAGE, {"message": "🔎 Searching the internet for follow-up..."})
-                    results = await search_papers(req.query, ["web"], req.filters)
-                
-                # If "papers" is NOT selected, drop the thesis context
+                    search_q = f"{req.original_query} {req.query}" if req.original_query else req.query
+                    results = await search_papers(search_q, ["web"], req.filters, _scrape_progress)
+                    # drain scraping progress events
+                    for ev in yield_queue:
+                        yield ev
+                    yield_queue.clear()
+
                 if "papers" not in req.sources:
                     req.thesis_context = None
-                    
-                # If neither is available, abort
+
                 if not results and not req.thesis_context:
                     err_msg = "> [!WARNING]\n> **No sources selected.**\n> Please select at least one source (Papers or Internet) for your follow-up query.\n\n"
                     yield _sse(StreamEventType.TOKEN, {"content": err_msg})
                     yield _sse(StreamEventType.DONE, {"session_id": session_id})
                     return
             else:
-                # Original thesis generation search logic
-                results = await search_papers(req.query, req.sources, req.filters)
+                yield _sse(StreamEventType.STAGE, {"message": "🔎 Searching for top sources..."})
+                results = await search_papers(req.query, req.sources, req.filters, _scrape_progress)
+                # drain scraping progress events
+                for ev in yield_queue:
+                    yield ev
+                yield_queue.clear()
 
                 if not results:
                     err_msg = "> [!WARNING]\n> **No sources found.**\n> Please provide a more elaborate or specific query to search.\n\n"
-                    
-                    # Fetch alternative suggestions from the LLM
+
                     suggestions = await suggest_alternative_topics(req.query)
                     if suggestions:
                         err_msg += "**Alternatively, try exploring one of these related topics:**\n\n"
                         for s in suggestions:
                             err_msg += f"- *{s}*\n"
-                    
+
                     yield _sse(StreamEventType.TOKEN, {"content": err_msg})
-                    # Save the empty state so it persists in chat history
                     await session_store.save(SynthesisResult(
-                        session_id = session_id, query = req.query, results = [], paper_text = err_msg
+                        session_id=session_id, query=req.query, results=[], paper_text=err_msg
                     ))
                     yield _sse(StreamEventType.DONE, {"session_id": session_id})
                     return
 
             if results:
-                # Emit top-10 results immediately so UI can show them
+                # Emit results immediately so UI can show source cards
                 yield _sse(
                     StreamEventType.RESULT,
                     {"results": [r.model_dump() for r in results]},
                 )
 
-            # Stage 2: synthesizing
+            # Stage 3: synthesizing
             if req.is_followup:
                 msg = "💡 Generating response..." if not results else f"💡 Found {len(results)} new sources. Generating response..."
                 yield _sse(StreamEventType.STAGE, {"message": msg})
             else:
-                yield _sse(StreamEventType.STAGE, {"message": f"📝 Found {len(results)} sources. Generating synthesis paper…"})
+                yield _sse(StreamEventType.STAGE, {"message": f"📝 Analysing {len(results)} sources. Writing thesis…"})
 
             paper_text = ""
             async for token in synthesize(req.query, results, is_followup=req.is_followup, thesis_context=req.thesis_context):

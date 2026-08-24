@@ -13,6 +13,7 @@ class QueryRequest(BaseModel):
     filters: dict | None = None
     is_followup: bool = False
     thesis_context: str | None = None  # the current thesis text for follow-up chats
+    original_query: str | None = None  # the original thesis topic for follow-up context
 
 
 class SearchResult(BaseModel):
@@ -33,8 +34,9 @@ class SynthesisResult(BaseModel):
 
 
 class StreamEventType(str, Enum):
-    STAGE = "stage"
-    RESULT = "result"
-    TOKEN = "token"
-    DONE = "done"
-    ERROR = "error"
+    STAGE    = "stage"
+    SCRAPING = "scraping"   # per-URL scrape progress
+    RESULT   = "result"
+    TOKEN    = "token"
+    DONE     = "done"
+    ERROR    = "error"

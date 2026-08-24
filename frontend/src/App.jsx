@@ -241,6 +241,13 @@ export default function App() {
     setShowScrollDown(distanceFromBottom > 80);
   };
 
+  // Auto-scroll to bottom of chat
+  useEffect(() => {
+    if (!showScrollDown && chatEndRef.current) {
+      chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [messages, stage]);
+
   // Auto-resize composer
   useEffect(() => {
     const resize = (id) => {
@@ -326,6 +333,7 @@ export default function App() {
           sources: (isFollowUp && !sourcesEnabled) ? [] : sources,
           is_followup: isFollowUp,
           thesis_context: thesisContext,
+          original_query: isFollowUp ? activeChat : null,
         }),
       });
 
@@ -371,7 +379,7 @@ export default function App() {
       setStage(`Connection failed: ${err.message}`);
       setIsLoading(false);
     }
-  }, [isLoading, recentQueries]);
+  }, [isLoading, recentQueries, messages, chatStarted, activeChat, filters, sources, sourcesEnabled]);
 
   const handleKey = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submitQuery(query); }
@@ -808,10 +816,14 @@ export default function App() {
                   {/* Follow-up chat messages */}
                   <div className="right-chat-messages" ref={contentRef} onScroll={handleScroll}>
                     {messages.map((msg, idx) => {
-                      // Skip the initial thesis prompt (first user message)
-                      if (idx === 0 && msg.role === 'user') return null;
-                      // Skip the generated thesis itself (assistant message with sessionId)
-                      if (msg.role === 'assistant' && msg.sessionId) return null;
+                      // The generated thesis itself is shown in the left panel, but we leave a placeholder here so the chat doesn't look broken
+                      if (msg.role === 'assistant' && msg.sessionId) {
+                        return (
+                          <div key={idx} className="right-assistant-msg" style={{ fontStyle: 'italic', color: 'var(--ink-soft)' }}>
+                            ✨ I've generated a comprehensive research document based on your query. You can view, edit, and download it in the left panel. Feel free to ask any follow-up questions below!
+                          </div>
+                        );
+                      }
 
                       return (
                         <div key={idx}>
