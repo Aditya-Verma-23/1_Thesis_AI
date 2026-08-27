@@ -1437,13 +1437,11 @@ h1.greeting {
 /* Embedded Image Styling */
 .msg-assistant img {
   max-width: 100%;
-  max-height: 450px;
   display: block;
   margin: 24px auto;
   border-radius: 8px;
   box-shadow: var(--shadow);
   border: 1px solid var(--line);
-  object-fit: contain;
 }
 
 /* Ã¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢ÂÃ¢â€¢Â
@@ -1635,14 +1633,12 @@ h1.greeting {
 }
 
 .thesis-doc-content img {
-  max-width: 80%;
-  max-height: 380px;
+  max-width: 100%;
   display: block;
   margin: 20px auto;
   border-radius: 8px;
   box-shadow: var(--shadow);
   border: 1px solid var(--line);
-  object-fit: contain;
 }
 
 /* Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ RIGHT: Sources + Chat Panel Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ */
@@ -2332,4 +2328,4 @@ h1.greeting {
 }
 .ql-editor { padding: 40px !important; font-size: 15px; line-height: 1.6; color: #24292e; }
 
-.thesis-doc-content img { max-width: 100%; height: auto; border-radius: 8px; margin: 10px 0; }
+.thesis-doc-content img { max-width: 100%; border-radius: 8px; margin: 10px 0; }

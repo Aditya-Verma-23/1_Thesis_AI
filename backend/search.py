@@ -27,7 +27,7 @@ MAX_PER_ENGINE  = 8    # fetch a few extra so dedup still yields the target
 TOTAL_RESULTS   = 8    # default top-N returned
 SCRAPE_TIMEOUT  = 10.0 # seconds per URL
 SCRAPE_MAX_CHARS = 12_000  # chars of page text fed to LLM per source
-SEARCH_TIMEOUT  = 25   # seconds for the whole search gather
+SEARCH_TIMEOUT  = 90   # seconds — must be long enough for DDG retry backoff (up to ~31s)
 
 # Realistic browser User-Agent header
 _UA = (
@@ -39,57 +39,163 @@ _UA = (
 
 # ── Synchronous helpers (executed in thread-pool) ─────────────────────────────
 
+import time
+import random
+
+_DDG_MAX_RETRIES   = 5   # how many times to retry DDG before giving up
+_DDG_BASE_DELAY    = 1.0 # seconds — doubles each retry (exponential backoff)
+_GOOGLE_MAX_RETRIES = 3
+_BING_MAX_RETRIES  = 3
+
+# Rotate query variants to bypass DDG rate-limits on repeated failures
+_QUERY_SUFFIXES = ["", " research", " academic", " overview", " explained"]
+
+
 def _ddg_sync(query: str, max_results: int) -> list[dict]:
-    """DuckDuckGo text search using the ddgs package."""
-    try:
-        from ddgs import DDGS
-        results = []
-        with DDGS() as ddgs:
-            for r in ddgs.text(query, max_results=max_results):
-                results.append({
-                    "title":   r.get("title", ""),
-                    "url":     r.get("href", ""),
-                    "snippet": r.get("body", ""),
-                    "source":  "duckduckgo",
-                })
-        return results
-    except Exception as exc:
-        logger.warning(f"DuckDuckGo failed: {exc}")
-        return []
+    """
+    DuckDuckGo text search with automatic retry + exponential backoff.
+    Rotates query variants on each attempt so rate-limit blocks are bypassed.
+    Never gives up silently — tries up to _DDG_MAX_RETRIES times.
+    """
+    from ddgs import DDGS
+
+    last_exc: Exception | None = None
+    for attempt in range(_DDG_MAX_RETRIES):
+        # Rotate a small suffix to vary the query and dodge caching/rate-limits
+        suffix = _QUERY_SUFFIXES[attempt % len(_QUERY_SUFFIXES)]
+        varied_query = query + suffix if suffix else query
+
+        try:
+            results = []
+            with DDGS() as ddgs:
+                for r in ddgs.text(varied_query, max_results=max_results):
+                    results.append({
+                        "title":   r.get("title", ""),
+                        "url":     r.get("href", ""),
+                        "snippet": r.get("body", ""),
+                        "source":  "duckduckgo",
+                    })
+            if results:
+                if attempt > 0:
+                    logger.info(f"DuckDuckGo succeeded on attempt {attempt + 1}")
+                return results
+            # Empty result — treat as soft failure and retry
+            raise ValueError("No results found.")
+        except Exception as exc:
+            last_exc = exc
+            delay = _DDG_BASE_DELAY * (2 ** attempt) + random.uniform(0, 0.5)
+            logger.warning(
+                f"DuckDuckGo attempt {attempt + 1}/{_DDG_MAX_RETRIES} failed: {exc} "
+                f"— retrying in {delay:.1f}s…"
+            )
+            time.sleep(delay)
+
+    logger.error(f"DuckDuckGo gave up after {_DDG_MAX_RETRIES} attempts: {last_exc}")
+    return []
 
 
 def _ddg_images_sync(query: str, max_results: int) -> list[str]:
-    """DuckDuckGo image search using the ddgs package."""
-    try:
-        from ddgs import DDGS
-        images = []
-        with DDGS() as ddgs:
-            for r in ddgs.images(query, max_results=max_results):
-                url = r.get("image")
-                if url:
-                    images.append(url)
-        return images
-    except Exception as exc:
-        logger.warning(f"DuckDuckGo images failed: {exc}")
-        return []
+    """DuckDuckGo image search with retry."""
+    from ddgs import DDGS
+
+    for attempt in range(3):
+        try:
+            images = []
+            with DDGS() as ddgs:
+                for r in ddgs.images(query, max_results=max_results):
+                    url = r.get("image")
+                    if url:
+                        images.append(url)
+            if images:
+                return images
+            raise ValueError("No images found.")
+        except Exception as exc:
+            delay = _DDG_BASE_DELAY * (2 ** attempt)
+            logger.warning(f"DuckDuckGo images attempt {attempt + 1}/3 failed: {exc} — retrying in {delay:.1f}s…")
+            time.sleep(delay)
+    return []
 
 
 def _google_sync(query: str, max_results: int) -> list[dict]:
-    """Google search using googlesearch-python (keyless scrape)."""
-    try:
-        from googlesearch import search
-        results = []
-        for url in search(query, num_results=max_results, lang="en"):
-            results.append({
-                "title":   "",
-                "url":     url,
-                "snippet": "",
-                "source":  "google",
-            })
-        return results
-    except Exception as exc:
-        logger.warning(f"Google search failed: {exc}")
-        return []
+    """Google search with retry using googlesearch-python (keyless scrape)."""
+    for attempt in range(_GOOGLE_MAX_RETRIES):
+        try:
+            from googlesearch import search
+            results = []
+            for url in search(query, num_results=max_results, lang="en"):
+                results.append({
+                    "title":   "",
+                    "url":     url,
+                    "snippet": "",
+                    "source":  "google",
+                })
+            if results:
+                if attempt > 0:
+                    logger.info(f"Google search succeeded on attempt {attempt + 1}")
+                return results
+            raise ValueError("No results found.")
+        except Exception as exc:
+            delay = 2.0 * (attempt + 1)
+            logger.warning(f"Google search attempt {attempt + 1}/{_GOOGLE_MAX_RETRIES} failed: {exc} — retrying in {delay:.1f}s…")
+            time.sleep(delay)
+    logger.error("Google search gave up after all retries.")
+    return []
+
+
+def _bing_sync(query: str, max_results: int) -> list[dict]:
+    """
+    Bing web search via HTML scraping — used as a third-engine fallback.
+    No API key required. Retries up to _BING_MAX_RETRIES times.
+    """
+    import urllib.parse
+    import re
+    import requests as _req
+
+    headers = {
+        "User-Agent": _UA,
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept": "text/html,application/xhtml+xml",
+    }
+
+    for attempt in range(_BING_MAX_RETRIES):
+        try:
+            encoded = urllib.parse.quote_plus(query)
+            url = f"https://www.bing.com/search?q={encoded}&count={max_results}&setlang=en"
+            resp = _req.get(url, headers=headers, timeout=15)
+            resp.raise_for_status()
+
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(resp.text, "html.parser")
+
+            results = []
+            for li in soup.select("li.b_algo")[:max_results]:
+                a_tag = li.select_one("h2 a")
+                snippet_tag = li.select_one(".b_caption p")
+                if not a_tag:
+                    continue
+                href = a_tag.get("href", "")
+                # Skip Bing redirect URLs — only accept direct HTTP(S) links
+                if not href.startswith("http"):
+                    continue
+                results.append({
+                    "title":   a_tag.get_text(strip=True),
+                    "url":     href,
+                    "snippet": snippet_tag.get_text(strip=True) if snippet_tag else "",
+                    "source":  "bing",
+                })
+
+            if results:
+                if attempt > 0:
+                    logger.info(f"Bing search succeeded on attempt {attempt + 1}")
+                return results
+            raise ValueError("No results parsed from Bing HTML.")
+        except Exception as exc:
+            delay = 2.0 * (attempt + 1)
+            logger.warning(f"Bing attempt {attempt + 1}/{_BING_MAX_RETRIES} failed: {exc} — retrying in {delay:.1f}s…")
+            time.sleep(delay)
+
+    logger.error("Bing search gave up after all retries.")
+    return []
 
 
 # ── Smart HTML text extractor ─────────────────────────────────────────────────
@@ -128,6 +234,27 @@ def _extract_text(html: bytes) -> str:
     return text[:SCRAPE_MAX_CHARS]
 
 
+def _extract_pdf_text(pdf_bytes: bytes) -> str:
+    """Extract text from a PDF file."""
+    try:
+        import pypdf
+        import io
+        reader = pypdf.PdfReader(io.BytesIO(pdf_bytes))
+        text = []
+        for page in reader.pages:
+            page_text = page.extract_text()
+            if page_text:
+                text.append(page_text)
+        
+        full_text = " ".join(text)
+        import re
+        full_text = re.sub(r"\s{2,}", " ", full_text)
+        return full_text[:SCRAPE_MAX_CHARS]
+    except Exception as exc:
+        logger.warning(f"PDF extraction failed: {exc}")
+        return ""
+
+
 # ── Async URL scraper with retry ──────────────────────────────────────────────
 
 async def _scrape_url(url: str) -> str:
@@ -147,7 +274,16 @@ async def _scrape_url(url: str) -> str:
             ) as client:
                 resp = await client.get(url)
                 resp.raise_for_status()
-                return _extract_text(resp.content)
+
+                content_type = resp.headers.get("Content-Type", "").lower()
+                
+                if "application/pdf" in content_type or resp.content.startswith(b"%PDF"):
+                    return _extract_pdf_text(resp.content)
+                elif "text/html" in content_type or "text/plain" in content_type or not content_type:
+                    return _extract_text(resp.content)
+                else:
+                    logger.debug(f"Skipping unsupported content type '{content_type}' for {url}")
+                    return ""
         except Exception as exc:
             if attempt == 0:
                 logger.debug(f"Scrape attempt 1 failed for {url}: {exc} — retrying…")
@@ -264,13 +400,13 @@ async def search_papers(
 
     # ── Run search engines concurrently for all queries ─────────────────────
     tasks = []
-    
-    # Half the results from DDG, half from Google for each query
-    # and we fetch images using the base query
+
+    # DDG + Google + Bing for each query, images via DDG on the base query
     for q in queries_to_run:
         tasks.append(asyncio.to_thread(_ddg_sync, q, max_per_engine))
         tasks.append(asyncio.to_thread(_google_sync, q, max_per_engine))
-        
+        tasks.append(asyncio.to_thread(_bing_sync, q, max_per_engine))
+
     tasks.append(asyncio.to_thread(_ddg_images_sync, query, 3))
 
     try:

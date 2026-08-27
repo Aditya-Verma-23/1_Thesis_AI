@@ -1,7 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import './index.css';
-import ReactQuill from 'react-quill';
+import ReactQuill, { Quill } from 'react-quill';
+import ImageResize from 'quill-image-resize-module-react';
+import { CustomResize } from './CustomResize';
 import 'react-quill/dist/quill.snow.css';
+
+window.Quill = Quill;
+Quill.register('modules/imageResize', ImageResize);
 import { marked } from 'marked';
 import TurndownService from 'turndown';
 import FilterPanel from './components/FilterPanel';
@@ -324,7 +329,9 @@ export default function App() {
     };
 
     try {
-      const res = await fetch(`${BACKEND_URL}/api/query`, {
+      // Use direct /api/chat endpoint for follow-ups, /api/query for initial thesis
+      const endpoint = isFollowUp ? '/api/chat' : '/api/query';
+      const res = await fetch(`${BACKEND_URL}${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -339,40 +346,61 @@ export default function App() {
 
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder('utf-8');
-      let buffer = '';
+      if (isFollowUp) {
+        // Direct response (non-streaming) for follow-ups
+        const data = await res.json();
+        const updateLast = (fn) =>
+          setMessages(prev => {
+            const next = [...prev];
+            next[next.length - 1] = { ...next[next.length - 1], ...fn(next[next.length - 1]) };
+            return next;
+          });
+        
+        updateLast(p => ({ 
+          ...p, 
+          content: data.answer || '', 
+          results: data.results || [],
+          sessionId: null  // Don't overwrite thesis session
+        }));
+        setStage('');
+        setIsLoading(false);
+        setMessages(prev => { persistMessages(prev); return prev; });
+      } else {
+        // Streaming response for initial thesis generation
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let buffer = '';
 
-      const updateLast = (fn) =>
-        setMessages(prev => {
-          const next = [...prev];
-          next[next.length - 1] = { ...next[next.length - 1], ...fn(next[next.length - 1]) };
-          return next;
-        });
+        const updateLast = (fn) =>
+          setMessages(prev => {
+            const next = [...prev];
+            next[next.length - 1] = { ...next[next.length - 1], ...fn(next[next.length - 1]) };
+            return next;
+          });
 
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const parts = buffer.split('\n\n');
-        buffer = parts.pop();
-        for (const part of parts) {
-          if (!part.startsWith('data: ')) continue;
-          try {
-            const data = JSON.parse(part.slice(6));
-            if (data.type === 'stage') { setStage(data.message); }
-            else if (data.type === 'result') { updateLast(p => ({ ...p, results: data.results || [] })); setStage(''); }
-            else if (data.type === 'token') { updateLast(p => ({ ...p, content: p.content + data.content })); }
-            else if (data.type === 'done') {
-              // Follow-up responses must NOT overwrite the thesis (no sessionId)
-              updateLast(p => ({ ...p, sessionId: isFollowUp ? null : data.session_id }));
-              setStage('');
-              setIsLoading(false);
-              setSplitView(true);
-              setMessages(prev => { persistMessages(prev); return prev; });
-            }
-            else if (data.type === 'error') { setStage(`Error: ${data.message}`); setIsLoading(false); }
-          } catch { /* skip */ }
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split('\n\n');
+          buffer = parts.pop();
+          for (const part of parts) {
+            if (!part.startsWith('data: ')) continue;
+            try {
+              const data = JSON.parse(part.slice(6));
+              if (data.type === 'stage') { setStage(data.message); }
+              else if (data.type === 'result') { updateLast(p => ({ ...p, results: data.results || [] })); setStage(''); }
+              else if (data.type === 'token') { updateLast(p => ({ ...p, content: p.content + data.content })); }
+              else if (data.type === 'done') {
+                updateLast(p => ({ ...p, sessionId: data.session_id }));
+                setStage('');
+                setIsLoading(false);
+                setSplitView(true);
+                setMessages(prev => { persistMessages(prev); return prev; });
+              }
+              else if (data.type === 'error') { setStage(`Error: ${data.message}`); setIsLoading(false); }
+            } catch { /* skip */ }
+          }
         }
       }
     } catch (err) {
@@ -696,7 +724,14 @@ export default function App() {
                       <>
                         <button className="doc-action-btn primary" onClick={() => {
                           const turndownService = new TurndownService({ headingStyle: 'atx' });
-                          const markdownContent = turndownService.turndown(thesisEditContent);
+                          turndownService.addRule('keep-img', {
+                            filter: 'img',
+                            replacement: (content, node) => node.outerHTML
+                          });
+                          let markdownContent = turndownService.turndown(thesisEditContent);
+
+                          // Fix escaped citations: \[1\] -> [1]
+                          markdownContent = markdownContent.replace(/\\\[(\d+)\\\]/g, '[$1]');
 
                           setMessages(prev => {
                             const next = [...prev];
@@ -730,7 +765,11 @@ export default function App() {
                       value={thesisEditContent}
                       onChange={setThesisEditContent}
                       modules={{
-                        toolbar: { container: '#custom-toolbar' }
+                        toolbar: { container: '#custom-toolbar' },
+                        imageResize: {
+                          parchment: Quill.import('parchment'),
+                          modules: [CustomResize, 'DisplaySize']
+                        }
                       }}
                       style={{ height: '100%', minHeight: '500px' }}
                     />

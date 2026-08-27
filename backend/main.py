@@ -165,6 +165,44 @@ async def query(req: QueryRequest):
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
+# ── Direct (non-streaming) follow-up endpoint ──────────────────────────────────
+
+@app.post("/api/chat")
+async def chat(req: QueryRequest):
+    """Direct response for follow-up questions — returns full answer as JSON."""
+    if not req.is_followup:
+        raise HTTPException(status_code=400, detail="Use /api/query for initial thesis generation")
+
+    session_id = req.session_id or str(uuid.uuid4())
+
+    try:
+        # Search for new sources if needed (same logic as /api/query)
+        results: list[SearchResult] = []
+        yield_queue: list[str] = []
+
+        async def _scrape_progress(current: int, total: int, title: str) -> None:
+            pass  # no streaming for direct endpoint
+
+        if "web" in (req.sources or []):
+            search_q = f"{req.original_query} {req.query}" if req.original_query else req.query
+            results = await search_papers(search_q, ["web"], req.filters, _scrape_progress)
+
+        # Get thesis context
+        thesis_context = req.thesis_context
+
+        # Synthesize answer (non-streaming)
+        answer_parts = []
+        async for token in synthesize(req.query, results, is_followup=True, thesis_context=thesis_context):
+            answer_parts.append(token)
+        answer = "".join(answer_parts)
+
+        return {"answer": answer, "results": [r.model_dump() for r in results], "session_id": session_id}
+
+    except Exception as exc:
+        logger.exception("Chat endpoint error")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
 @app.get("/api/download/{session_id}")
 async def download(session_id: str):
     result = await session_store.get(session_id)
