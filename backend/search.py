@@ -200,7 +200,7 @@ def _bing_sync(query: str, max_results: int) -> list[dict]:
 
 # ── Smart HTML text extractor ─────────────────────────────────────────────────
 
-def _extract_text(html: bytes) -> str:
+def _extract_text(html: bytes, max_chars: int = SCRAPE_MAX_CHARS) -> str:
     """
     Extract the most content-rich text from raw HTML.
 
@@ -231,10 +231,10 @@ def _extract_text(html: bytes) -> str:
     # Collapse runs of whitespace
     import re
     text = re.sub(r"\s{2,}", " ", text)
-    return text[:SCRAPE_MAX_CHARS]
+    return text[:max_chars]
 
 
-def _extract_pdf_text(pdf_bytes: bytes) -> str:
+def _extract_pdf_text(pdf_bytes: bytes, max_chars: int = SCRAPE_MAX_CHARS) -> str:
     """Extract text from a PDF file."""
     try:
         import pypdf
@@ -249,7 +249,7 @@ def _extract_pdf_text(pdf_bytes: bytes) -> str:
         full_text = " ".join(text)
         import re
         full_text = re.sub(r"\s{2,}", " ", full_text)
-        return full_text[:SCRAPE_MAX_CHARS]
+        return full_text[:max_chars]
     except Exception as exc:
         logger.warning(f"PDF extraction failed: {exc}")
         return ""
@@ -257,7 +257,7 @@ def _extract_pdf_text(pdf_bytes: bytes) -> str:
 
 # ── Async URL scraper with retry ──────────────────────────────────────────────
 
-async def _scrape_url(url: str) -> str:
+async def _scrape_url(url: str, max_chars: int = SCRAPE_MAX_CHARS) -> str:
     """Fetch and extract main text from a URL. Retries once on failure."""
     if not url or not url.startswith("http"):
         return ""
@@ -278,9 +278,9 @@ async def _scrape_url(url: str) -> str:
                 content_type = resp.headers.get("Content-Type", "").lower()
                 
                 if "application/pdf" in content_type or resp.content.startswith(b"%PDF"):
-                    return _extract_pdf_text(resp.content)
+                    return _extract_pdf_text(resp.content, max_chars)
                 elif "text/html" in content_type or "text/plain" in content_type or not content_type:
-                    return _extract_text(resp.content)
+                    return _extract_text(resp.content, max_chars)
                 else:
                     logger.debug(f"Skipping unsupported content type '{content_type}' for {url}")
                     return ""
@@ -300,6 +300,7 @@ async def search_papers(
     sources: list[str] | None = None,
     filters: dict | None = None,
     progress_cb: Optional[Callable[[int, int, str], Awaitable[None]]] = None,
+    scrape_max_chars: int = SCRAPE_MAX_CHARS,
 ) -> list[SearchResult]:
     """
     Search DuckDuckGo + Google concurrently, scrape each result's full page,
@@ -470,8 +471,37 @@ async def search_papers(
         if progress_cb:
             await progress_cb(idx, total, sr.title or sr.url or "")
 
-        text = await _scrape_url(sr.url or "")
+        text = await _scrape_url(sr.url or "", scrape_max_chars)
         if text:
             sr.full_text = text
 
     return merged[:total_results]
+
+
+async def search_for_chat(
+    original_query: str,
+    chat_query: str,
+    sources: list[str] | None = None,
+    filters: dict | None = None,
+    progress_cb: Optional[Callable[[int, int, str], Awaitable[None]]] = None,
+) -> list[SearchResult]:
+    """
+    Faster, targeted search for chat follow-ups.
+    Uses fewer results and limits the scrape size for speed.
+    """
+    # 1. Build a contextual query
+    # Simple rule-based: use main keywords from original query + chat query
+    stop_words = {"what", "are", "the", "how", "is", "why", "do", "does", "in", "of", "and", "a", "to", "for", "on", "with"}
+    chat_words = [w for w in chat_query.split() if w.lower() not in stop_words]
+    
+    # We take the first 4 words of the original query as context
+    context_words = (original_query or "").split()[:4]
+    search_q = " ".join(context_words + chat_words)
+    
+    # 2. Setup fast filters
+    filters = filters or {}
+    # Fetch max 3 results for fast chat response
+    filters["minCitations"] = 3 
+    
+    # 3. Call main search with our targeted query and lower scrape limit (4000 chars)
+    return await search_papers(search_q, sources, filters, progress_cb, scrape_max_chars=4000)

@@ -396,10 +396,10 @@ export default function App() {
             next[next.length - 1] = { ...next[next.length - 1], ...fn(next[next.length - 1]) };
             return next;
           });
-        
-        updateLast(p => ({ 
-          ...p, 
-          content: data.answer || '', 
+
+        updateLast(p => ({
+          ...p,
+          content: data.answer || '',
           results: data.results || [],
           sessionId: null  // Don't overwrite thesis session
         }));

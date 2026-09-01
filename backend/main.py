@@ -19,8 +19,8 @@ from loguru import logger
 
 import session_store
 from models import QueryRequest, SearchResult, StreamEventType, SynthesisResult
-from search import search_papers
-from synthesizer import synthesize, suggest_alternative_topics
+from search import search_papers, search_for_chat
+from synthesizer import synthesize, synthesize_chat, suggest_alternative_topics
 
 
 # ── App lifecycle ──────────────────────────────────────────────────────────────
@@ -140,13 +140,18 @@ async def query(req: QueryRequest):
             if req.is_followup:
                 msg = "💡 Generating response..." if not results else f"💡 Found {len(results)} new sources. Generating response..."
                 yield _sse(StreamEventType.STAGE, {"message": msg})
+                
+                paper_text = ""
+                async for token in synthesize_chat(req.query, results, thesis_context=req.thesis_context):
+                    paper_text += token
+                    yield _sse(StreamEventType.TOKEN, {"content": token})
             else:
                 yield _sse(StreamEventType.STAGE, {"message": f"📝 Analysing {len(results)} sources. Writing thesis…"})
-
-            paper_text = ""
-            async for token in synthesize(req.query, results, is_followup=req.is_followup, thesis_context=req.thesis_context):
-                paper_text += token
-                yield _sse(StreamEventType.TOKEN, {"content": token})
+                
+                paper_text = ""
+                async for token in synthesize(req.query, results):
+                    paper_text += token
+                    yield _sse(StreamEventType.TOKEN, {"content": token})
 
             # Save to session store for download
             await session_store.save(SynthesisResult(
@@ -176,23 +181,23 @@ async def chat(req: QueryRequest):
     session_id = req.session_id or str(uuid.uuid4())
 
     try:
-        # Search for new sources if needed (same logic as /api/query)
+        # Search for new sources if needed
         results: list[SearchResult] = []
-        yield_queue: list[str] = []
 
-        async def _scrape_progress(current: int, total: int, title: str) -> None:
-            pass  # no streaming for direct endpoint
-
-        if "web" in (req.sources or []):
-            search_q = f"{req.original_query} {req.query}" if req.original_query else req.query
-            results = await search_papers(search_q, ["web"], req.filters, _scrape_progress)
+        if "web" in (req.sources or []) or "papers" in (req.sources or []):
+            results = await search_for_chat(
+                original_query=req.original_query,
+                chat_query=req.query,
+                sources=req.sources,
+                filters=req.filters
+            )
 
         # Get thesis context
         thesis_context = req.thesis_context
 
         # Synthesize answer (non-streaming)
         answer_parts = []
-        async for token in synthesize(req.query, results, is_followup=True, thesis_context=thesis_context):
+        async for token in synthesize_chat(req.query, results, thesis_context=thesis_context):
             answer_parts.append(token)
         answer = "".join(answer_parts)
 

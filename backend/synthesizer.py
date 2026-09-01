@@ -723,8 +723,6 @@ def _template_chat(query: str, results: list[SearchResult], thesis_context: str 
 async def synthesize(
     query: str,
     results: list[SearchResult],
-    is_followup: bool = False,
-    thesis_context: str | None = None,
 ) -> AsyncIterator[str]:
     """Yield paper tokens. Falls back to template if both LLMs are offline."""
     sources_text      = _format_sources(results)        # full-size for Ollama (10k chars/source)
@@ -737,49 +735,61 @@ async def synthesize(
     def producer():
         nonlocal ollama_available
 
-        # ── Thesis generation (non-followup) ──────────────────────────────────
-        if not is_followup:
-            title = _generate_title_sync(query)  # tries Groq → Ollama internally
-            logger.info(f"Using title: {title}")
+        # ── Thesis generation ──────────────────────────────────
+        title = _generate_title_sync(query)  # tries Groq → Ollama internally
+        logger.info(f"Using title: {title}")
 
-            # 1. Try Groq (PRIMARY)
-            try:
-                for token in _stream_groq(query, groq_sources_text, title):
-                    loop.call_soon_threadsafe(queue.put_nowait, token)
-                loop.call_soon_threadsafe(queue.put_nowait, None)
-                return
-            except Exception as exc:
-                logger.warning(f"Groq thesis stream failed ({exc}); trying Ollama…")
-
-            # 2. Try Ollama (SECONDARY)
-            try:
-                for token in _stream_ollama(query, sources_text, title):
-                    loop.call_soon_threadsafe(queue.put_nowait, token)
-                loop.call_soon_threadsafe(queue.put_nowait, None)
-                return
-            except Exception as exc:
-                logger.warning(f"Ollama thesis stream failed ({exc}); using template fallback…")
-
-            # 3. Template fallback
-            ollama_available = False
-            fallback = _template_paper(query, results, title)
-            chunk_size = 80
-            for i in range(0, len(fallback), chunk_size):
-                loop.call_soon_threadsafe(queue.put_nowait, fallback[i:i + chunk_size])
-            loop.call_soon_threadsafe(queue.put_nowait, None)
-            return
-
-        # ── Chat / follow-up mode ──────────────────────────────────────────────
-        # 1. Try NVIDIA (PRIMARY)
+        # 1. Try Groq (PRIMARY)
         try:
-            for token in _stream_chat_nvidia(query, groq_sources_text, thesis_context):
+            for token in _stream_groq(query, groq_sources_text, title):
                 loop.call_soon_threadsafe(queue.put_nowait, token)
             loop.call_soon_threadsafe(queue.put_nowait, None)
             return
         except Exception as exc:
-            logger.warning(f"NVIDIA chat stream failed ({exc}); trying Groq…")
+            logger.warning(f"Groq thesis stream failed ({exc}); trying Ollama…")
 
-        # 2. Try Groq (SECONDARY)
+        # 2. Try Ollama (SECONDARY)
+        try:
+            for token in _stream_ollama(query, sources_text, title):
+                loop.call_soon_threadsafe(queue.put_nowait, token)
+            loop.call_soon_threadsafe(queue.put_nowait, None)
+            return
+        except Exception as exc:
+            logger.warning(f"Ollama thesis stream failed ({exc}); using template fallback…")
+
+        # 3. Template fallback
+        ollama_available = False
+        fallback = _template_paper(query, results, title)
+        chunk_size = 80
+        for i in range(0, len(fallback), chunk_size):
+            loop.call_soon_threadsafe(queue.put_nowait, fallback[i:i + chunk_size])
+        loop.call_soon_threadsafe(queue.put_nowait, None)
+        return
+
+    loop.run_in_executor(None, producer)
+
+
+    while True:
+        token = await queue.get()
+        if token is None:
+            break
+        yield token
+
+
+async def synthesize_chat(
+    query: str,
+    results: list[SearchResult],
+    thesis_context: str | None = None,
+) -> AsyncIterator[str]:
+    """Yield chat tokens for follow-up questions."""
+    sources_text      = _format_sources(results)
+    groq_sources_text = _format_sources_groq(results)
+
+    queue: asyncio.Queue[str | None] = asyncio.Queue()
+    loop = asyncio.get_running_loop()
+
+    def producer():
+        # 1. Try Groq (PRIMARY for chat)
         try:
             for token in _stream_chat_groq(query, groq_sources_text, thesis_context):
                 loop.call_soon_threadsafe(queue.put_nowait, token)
@@ -788,7 +798,7 @@ async def synthesize(
         except Exception as exc:
             logger.warning(f"Groq chat stream failed ({exc}); trying Ollama…")
 
-        # 3. Try Ollama (TERTIARY)
+        # 2. Try Ollama (SECONDARY)
         try:
             for token in _stream_chat_ollama(query, sources_text, thesis_context):
                 loop.call_soon_threadsafe(queue.put_nowait, token)
@@ -798,7 +808,6 @@ async def synthesize(
             logger.warning(f"Ollama chat stream failed ({exc}); using template fallback…")
 
         # 3. Template fallback
-        ollama_available = False
         fallback = _template_chat(query, results, thesis_context)
         chunk_size = 80
         for i in range(0, len(fallback), chunk_size):
