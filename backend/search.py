@@ -48,7 +48,7 @@ _GOOGLE_MAX_RETRIES = 3
 _BING_MAX_RETRIES  = 3
 
 # Rotate query variants to bypass DDG rate-limits on repeated failures
-_QUERY_SUFFIXES = ["", " research", " academic", " overview", " explained"]
+_QUERY_SUFFIXES = ["", " research", " academic study", " scientific review", " empirical findings"]
 
 
 def _ddg_sync(query: str, max_results: int) -> list[dict]:
@@ -377,7 +377,7 @@ async def search_papers(
             site_str = " OR ".join([f"site:{s}" for s in set(academic_sites)])
             paper_query = f"{paper_query} {site_str}"
         else:
-            paper_query = f"{paper_query} research paper thesis"
+            paper_query = f"{paper_query} academic research findings"
 
         queries_to_run.append(paper_query)
 
@@ -391,6 +391,9 @@ async def search_papers(
         if web_sites and not db_web.get("all", True):
             site_str = " OR ".join([f"site:{s}" for s in set(web_sites)])
             web_query = f"{web_query} {site_str}"
+        else:
+            # Add academic context to web query for better relevance
+            web_query = f"{web_query} research findings"
             
         queries_to_run.append(web_query)
 
@@ -407,7 +410,7 @@ async def search_papers(
         tasks.append(asyncio.to_thread(_google_sync, q, max_per_engine))
         tasks.append(asyncio.to_thread(_bing_sync, q, max_per_engine))
 
-    tasks.append(asyncio.to_thread(_ddg_images_sync, query, 3))
+    tasks.append(asyncio.to_thread(_ddg_images_sync, query, 5))
 
     try:
         results_gather = await asyncio.wait_for(
@@ -450,11 +453,11 @@ async def search_papers(
         if len(merged) >= total_results:
             break
 
-    # Assign 1-based indices and distribute images
+    # Assign 1-based indices and distribute images across sources
     img_idx = 0
     for i, sr in enumerate(merged, start=1):
         sr.index = i
-        if img_idx < len(ddg_images) and img_idx < 3:
+        if img_idx < len(ddg_images) and img_idx < 5:
             sr.image_url = ddg_images[img_idx]
             img_idx += 1
 

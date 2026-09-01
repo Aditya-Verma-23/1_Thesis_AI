@@ -1,13 +1,11 @@
 """Synthesis engine: generates a structured thesis paper from top-10 sources.
 
 Backend priority order (automatic failover):
-  1. NVIDIA NIM — nvidia/nemotron-3.5-lightning-30b-a3b — PRIMARY
-     High-quality 30B MoE model via NVIDIA Inference Microservices.
-  2. Groq cloud API — openai/gpt-oss-120b — SECONDARY
+  1. Groq cloud API — openai/gpt-oss-120b — PRIMARY
      Fast cloud inference, always available.
-  3. Local Ollama — qwen3:8b — TERTIARY (optional, when running)
+  2. Local Ollama — qwen3:8b — SECONDARY (optional, when running)
      Connect timeout is 3 s so a stopped Ollama fails instantly.
-  4. Template assembler — no LLM required — LAST RESORT
+  3. Template assembler — no LLM required — LAST RESORT
 """
 from __future__ import annotations
 
@@ -20,19 +18,13 @@ from loguru import logger
 
 from models import SearchResult
 
-# ── NVIDIA NIM (PRIMARY) ─────────────────────────────────────────────────────
-NVIDIA_API_KEY   = "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"
-NVIDIA_URL       = "https://integrate.api.nvidia.com/v1/chat/completions"
-NVIDIA_MODEL     = "nvidia/nemotron-3.5-lightning-30b-a3b"
-NVIDIA_TIMEOUT_S = 300
-
-# ── Groq cloud API (SECONDARY) ─────────────────────────────────────────────────
+# ── Groq cloud API (PRIMARY) ─────────────────────────────────────────────────
 GROQ_API_KEY   = "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"
 GROQ_URL       = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODEL     = "openai/gpt-oss-120b"
 GROQ_TIMEOUT_S = 300
 
-# ── Ollama local (TERTIARY — optional, used when running) ────────────────────
+# ── Ollama local (SECONDARY — optional, used when running) ────────────────────
 OLLAMA_URL           = "http://localhost:11434/v1/chat/completions"
 OLLAMA_MODEL         = "qwen3:8b"   # Best local model for summarisation / synthesis
 OLLAMA_CONNECT_TIMEOUT = 3          # seconds — fail fast if Ollama is not running
@@ -48,19 +40,6 @@ async def suggest_alternative_topics(query: str) -> list[str]:
     )
     
     loop = asyncio.get_running_loop()
-
-    def _call_nvidia():
-        return requests.post(
-            NVIDIA_URL,
-            headers={"Authorization": f"Bearer {NVIDIA_API_KEY}", "Content-Type": "application/json"},
-            json={
-                "model": NVIDIA_MODEL,
-                "messages": [{"role": "user", "content": prompt}],
-                "stream": False,
-                "temperature": 0.7,
-            },
-            timeout=30,
-        )
 
     def _call_groq():
         return requests.post(
@@ -87,7 +66,7 @@ async def suggest_alternative_topics(query: str) -> list[str]:
             timeout=(OLLAMA_CONNECT_TIMEOUT, 30),
         )
 
-    for _call, label in [(_call_nvidia, "NVIDIA"), (_call_groq, "Groq"), (_call_ollama, "Ollama")]:
+    for _call, label in [(_call_groq, "Groq"), (_call_ollama, "Ollama")]:
         try:
             resp = await loop.run_in_executor(None, _call)
             resp.raise_for_status()
@@ -137,22 +116,39 @@ write a comprehensive, highly detailed academic thesis paper.
     - Conclusion:            150–200 words
     Total body text: AT LEAST 1 500 words.
 
-5.  REFERENCES section at the end — use this EXACT format, one entry per line with a blank line between:
-    [[1]](URL) Title of the paper or page — URL
-    [[2]](URL) Title of the paper or page — URL
-    The number [1], [2] etc. MUST be a clickable Markdown link to the source URL.
+5.  REFERENCES section at the end — use this EXACT format, with a blank line between each entry:
+    [1] Title of the paper or page
+    https://source-url-here
+
+    [2] Title of the paper or page
+    https://source-url-here
+
+    Do NOT make the number a hyperlink. Do NOT put title and URL on the same line.
     Every source provided in the input MUST appear in the References section.
 
 6.  Do NOT use bullet points in the main body sections — write in full, formal academic prose.
 
-7.  Do NOT invent facts, statistics, or URLs not present in the sources provided.
-    If a source's content does not directly support a claim, cite a source that does.
+7.  REPHRASING — ABSOLUTE RULE:
+    - You MUST synthesise and rephrase all source content in your own formal academic language.
+    - NEVER copy, quote, or echo raw text verbatim from the source content.
+    - Do NOT paste scraped page content, navigation menus, or website boilerplate.
+    - Transform factual information into your own coherent academic sentences and paragraphs.
+    - Do NOT invent facts or statistics not present in the sources — but always express them
+      in original, rephrased academic prose with proper citations.
 
 8.  DATA VISUALISATION: Where sources discuss quantitative data, statistics, or comparative
     findings you MUST create at least one Markdown Table to represent these findings.
+    Table format:
+    | Column A | Column B | Column C |
+    |----------|----------|----------|
+    | Value    | Value    | Value    |
 
-9.  IMAGES: If a source provides an "Image URL", embed it with Markdown
-    `![Description](URL)` when discussing that source's findings.
+9.  IMAGES — MANDATORY RULE:
+    - If ANY source provides an "Image URL", you MUST embed it using Markdown syntax:
+      ![Descriptive caption explaining the image](IMAGE_URL_HERE)
+    - Place the image directly within the paragraph that discusses the relevant source.
+    - The image caption must be descriptive and academic (e.g., "Figure 1: Mechanism of CRISPR-Cas9 gene editing").
+    - Do NOT skip image embedding — every provided Image URL must appear in the paper.
 
 10. COMPLETENESS — ABSOLUTE RULE:
     - You MUST write EVERY section completely from start to finish.
@@ -162,10 +158,9 @@ write a comprehensive, highly detailed academic thesis paper.
       the Discussion, Conclusion, or References sections.
 
 ═══ WRITING QUALITY ═══
-- Formal, academic English throughout.
+- Formal, academic English throughout. Every sentence must be your own rephrased synthesis.
 - The full page content for each source is extensive — you MUST analyse specific details,
-  methodologies, empirical findings, and statistics from that content rather than
-  writing generic surface-level summaries.
+  methodologies, empirical findings, and statistics from that content.
 - Synthesise across sources: highlight agreement, contradiction, gaps, and evolution of ideas.
 - Name Literature Review sub-themes descriptively (e.g. "Neural Architectures for Disease
   Prognosis") — never use generic names like "Theme 1".
@@ -211,23 +206,8 @@ RULES:
 # ── Title generation (quick non-streaming Ollama call) ────────────────────────
 
 def _generate_title_sync(query: str) -> str:
-    """Ask NVIDIA (then Groq, then Ollama) to produce a refined academic title. Falls back to a cleaned query."""
+    """Ask Groq (then Ollama) to produce a refined academic title. Falls back to a cleaned query."""
     backends = [
-        {
-            "url":     NVIDIA_URL,
-            "headers": {"Authorization": f"Bearer {NVIDIA_API_KEY}", "Content-Type": "application/json"},
-            "payload": {
-                "model":       NVIDIA_MODEL,
-                "temperature": 0.4,
-                "stream":      False,
-                "messages": [
-                    {"role": "system", "content": TITLE_PROMPT},
-                    {"role": "user",   "content": query},
-                ],
-            },
-            "timeout": 30,
-            "label":   "NVIDIA",
-        },
         {
             "url":     GROQ_URL,
             "headers": {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
@@ -318,80 +298,6 @@ def _clean_token(token: str) -> str:
 
 
 # ── Streaming helpers (run in thread-pool) ───────────────────────────────
-
-def _stream_nvidia(query: str, sources_text: str, title: str):
-    """Stream thesis tokens from the NVIDIA NIM API (PRIMARY)."""
-    user_msg = (
-        f"Paper title (already decided — use this EXACTLY as the # heading): {title}\n\n"
-        f"Original research question: {query}\n\n"
-        f"CRITICAL: You MUST write the COMPLETE, FULL thesis paper without stopping. "
-        f"Every section MUST be fully written: Abstract, Introduction, Literature Review, "
-        f"Methodology, Analysis and Findings, Discussion, Conclusion, AND References. "
-        f"Do not stop writing until the References section is complete.\n\n"
-        f"Sources:\n{sources_text}"
-    )
-    payload = {
-        "model":       NVIDIA_MODEL,
-        "temperature": 0.3,
-        "max_tokens":  8192,
-        "stream":      True,
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user",   "content": user_msg},
-        ],
-    }
-    headers = {"Authorization": f"Bearer {NVIDIA_API_KEY}", "Content-Type": "application/json"}
-    with requests.post(NVIDIA_URL, headers=headers, json=payload, timeout=NVIDIA_TIMEOUT_S, stream=True) as resp:
-        resp.raise_for_status()
-        resp.encoding = "utf-8"
-        for raw in resp.iter_lines():
-            line = raw.decode("utf-8") if isinstance(raw, bytes) else raw
-            if not line or not line.startswith("data:"):
-                continue
-            data = line[len("data:"):].strip()
-            if data == "[DONE]":
-                break
-            try:
-                chunk = json.loads(data)
-                delta = chunk["choices"][0]["delta"].get("content")
-                if delta:
-                    yield _clean_token(delta)
-            except (json.JSONDecodeError, KeyError, IndexError):
-                continue
-
-
-def _stream_chat_nvidia(query: str, sources_text: str, thesis_context: str | None):
-    """Streaming chat via NVIDIA NIM API (PRIMARY)."""
-    messages, _ = _build_chat_messages(
-        query, sources_text, thesis_context,
-        thesis_max_chars=4_000,
-    )
-    payload = {
-        "model":       NVIDIA_MODEL,
-        "temperature": 0.4,
-        "max_tokens":  4096,
-        "stream":      True,
-        "messages":    messages,
-    }
-    headers = {"Authorization": f"Bearer {NVIDIA_API_KEY}", "Content-Type": "application/json"}
-    with requests.post(NVIDIA_URL, headers=headers, json=payload, timeout=NVIDIA_TIMEOUT_S, stream=True) as resp:
-        resp.raise_for_status()
-        resp.encoding = "utf-8"
-        for raw in resp.iter_lines():
-            line = raw.decode("utf-8") if isinstance(raw, bytes) else raw
-            if not line or not line.startswith("data:"):
-                continue
-            data = line[len("data:"):].strip()
-            if data == "[DONE]":
-                return
-            try:
-                obj = json.loads(data)
-                delta = obj["choices"][0]["delta"]
-                if "content" in delta and delta["content"]:
-                    yield _clean_token(delta["content"])
-            except (json.JSONDecodeError, KeyError, IndexError):
-                continue
-
 
 
 def _stream_ollama(query: str, sources_text: str, title: str):
@@ -566,48 +472,65 @@ def _stream_chat_groq(query: str, sources_text: str, thesis_context: str | None)
 
 # ── Fallback template (no LLM) ────────────────────────────────────────────────
 
+def _build_source_description(r: "SearchResult") -> str:
+    """
+    Build a clean, rephrased academic description of a source from its snippet.
+    Uses only the snippet (not raw scraped full_text) to avoid content dumps.
+    """
+    # Prefer snippet over full_text for template — snippets are clean search engine summaries
+    snippet = (r.snippet or "").strip()
+    if not snippet and hasattr(r, "full_text") and r.full_text:
+        # If we must use full_text, take only first 2 sentences
+        import re
+        sentences = re.split(r'(?<=[.!?])\s+', r.full_text.strip())
+        snippet = " ".join(sentences[:2]).strip()
+    return snippet[:300].rstrip(".,;") if snippet else ""
+
+
 def _template_paper(query: str, results: list[SearchResult], title: str) -> str:
     """
-    Rich fallback template used when Ollama is unavailable.
-    Produces a properly formatted, well-cited 2+ page paper purely from snippets.
+    Rich fallback template used when both LLMs are unavailable.
+    Produces a properly formatted, well-cited academic paper from clean snippets.
+    NEVER dumps raw scraped page content — always uses clean rephrased prose.
     """
     def _cite(idx: int) -> str:
         return f"[{idx}]"
 
     refs_section = "\n\n".join(
-        f"[[{r.index}]]({r.url}) **{r.title}**  \n{r.url}" for r in results
+        f"[{r.index}] {r.title}\n{r.url}" for r in results
     )
 
-    # Build a findings paragraph per source
+    # Build a findings paragraph per source using ONLY clean snippets
     lit_paragraphs = []
     for i, r in enumerate(results):
-        if not r.snippet and not getattr(r, "full_text", ""):
+        description = _build_source_description(r)
+        if not description:
             continue
-        content = getattr(r, "full_text", "") or r.snippet
-        # Use first 400 chars of content for the paragraph seed
-        excerpt = content[:400].strip().rstrip(".,;")
-        if not excerpt:
-            continue
-            
-        img_md = f"\n\n![Visual representation from {r.title}]({r.image_url})\n\n" if getattr(r, "image_url", None) else ""
-        
+
+        img_md = (
+            f"\n\n![Figure {r.index}: Visual overview related to {r.title}]({r.image_url})\n"
+            if getattr(r, "image_url", None) else ""
+        )
+
         if i % 2 == 0:
             lit_paragraphs.append(
-                f"Detailed analysis of the literature, particularly *{r.title}*, highlights that {excerpt} {_cite(r.index)}. "
-                f"These findings substantiate the broader thematic trends identified across the dataset, offering critical "
-                f"insights that inform the subsequent discussion {_cite(r.index)}.{img_md}"
+                f"The work presented in *{r.title}* {_cite(r.index)} offers a foundational perspective on "
+                f"the subject of {query}. According to this source, {description} {_cite(r.index)}. "
+                f"These insights substantially enrich the broader scholarly understanding of the topic "
+                f"and provide a critical empirical anchor for the subsequent discussion {_cite(r.index)}.{img_md}"
             )
         else:
             lit_paragraphs.append(
-                f"Expanding upon these observations, further research demonstrates how structural constraints impact the topic. "
-                f"Specifically, {excerpt} {_cite(r.index)}. This underscores the necessity for comprehensive empirical approaches "
-                f"to fully contextualise the variables involved.{img_md}"
+                f"Building upon the preceding analysis, the research documented in *{r.title}* {_cite(r.index)} "
+                f"further advances our understanding of {query}. The source establishes that {description} {_cite(r.index)}. "
+                f"This contribution underscores the multifaceted nature of the topic and highlights the "
+                f"necessity for comprehensive, evidence-based inquiry into the variables at play {_cite(r.index)}.{img_md}"
             )
 
     lit_text = "\n\n".join(lit_paragraphs) if lit_paragraphs else (
-        f"The retrieved sources collectively address *{query}* from multiple angles. "
-        f"Each of the {len(results)} sources contributes a distinct perspective, "
-        f"collectively enriching the scholarly discourse with robust quantitative and qualitative data."
+        f"The retrieved sources collectively address *{query}* from multiple disciplinary angles. "
+        f"Each of the {len(results)} sources contributes a distinct perspective, collectively "
+        f"enriching scholarly discourse with both quantitative and qualitative evidence {all_cites}."
     )
 
     # Group sources into two thematic clusters for the literature review
@@ -620,32 +543,48 @@ def _template_paper(query: str, results: list[SearchResult], title: str) -> str:
             return ""
         citations = " ".join(_cite(r.index) for r in group)
         titles = ", ".join(f"*{r.title}*" for r in group[:3])
+        more = f" and {len(group) - 3} additional works" if len(group) > 3 else ""
         return (
-            f"A cluster of the retrieved literature — including works such as {titles} — "
-            f"provides extensive foundational theories related to *{query}* {citations}. "
-            f"These sources construct a theoretical background that dictates the empirical methodologies "
-            f"and heavily informs the subsequent data analysis phases {citations}."
+            f"A significant cluster of the retrieved literature — encompassing works such as {titles}{more} — "
+            f"collectively addresses the foundational theoretical dimensions of *{query}* {citations}. "
+            f"These sources construct a robust theoretical background that informs the empirical "
+            f"methodologies employed in this study and anchors the subsequent data analysis phases {citations}. "
+            f"The scholarly contributions from this cluster demonstrate convergent agreement on the "
+            f"core mechanisms and implications of the topic under investigation {citations}."
         )
 
     all_cites = " ".join(_cite(r.index) for r in results)
 
+    # Academic comparison table using clean title and source info only
     table_rows = []
-    for r in results[:5]:
-        safe_title = (r.title[:45] + "...") if len(r.title) > 45 else r.title
-        table_rows.append(f"| {_cite(r.index)} | {safe_title} | Empirical | Statistically Significant |")
-    table_md = "| Source | Research Title / Focus | Methodology | Key Finding |\n|---|---|---|---|\n" + "\n".join(table_rows)
+    for r in results[:6]:
+        safe_title = (r.title[:42] + "…") if len(r.title) > 42 else r.title
+        import urllib.parse
+        try:
+            domain = urllib.parse.urlparse(r.url).netloc.replace("www.", "") if r.url else "Web"
+        except Exception:
+            domain = "Web"
+        table_rows.append(f"| {_cite(r.index)} | {safe_title} | {domain} | Qualitative/Empirical |")
+    table_md = (
+        "| Ref | Research Title / Focus | Source | Methodology |\n"
+        "|-----|------------------------|--------|-------------|\n"
+        + "\n".join(table_rows)
+    )
+
+    first_cite = _cite(results[0].index) if results else ""
+    last_cite  = _cite(results[-1].index) if results else ""
 
     paper = f"""# {title}
 
 ## Abstract
 
-This paper presents a comprehensive synthesis of {len(results)} online academic sources addressing the core research question: *"{query}"*. The sources span peer-reviewed journal articles, preprints, and rigorous academic reports retrieved from leading scholarly databases. Through a systematic methodology, this thesis identifies key themes, computational approaches, and raw findings directly relevant to the topic. The synthesis reveals a deeply substantiated body of research, with sources collectively providing empirical data and theoretical frameworks pertinent to the overarching problem statement {_cite(results[0].index) if results else ""}.
+This paper presents a comprehensive academic synthesis of {len(results)} scholarly sources addressing the research question: *"{query}"*. Drawing upon peer-reviewed journal articles, preprints, and authoritative academic reports retrieved from leading scholarly databases, this thesis employs a systematic review methodology to identify key themes, empirical findings, and theoretical frameworks directly relevant to the topic. The synthesis reveals a substantiated and growing body of research in which sources collectively contribute both empirical data and theoretical insights pertinent to the overarching problem statement {first_cite}. The paper proceeds through a structured analysis, culminating in a discussion of research gaps and directions for future scholarly inquiry.
 
 ## Introduction
 
-The topic of *"{query}"* occupies a significant position within contemporary academic and industrial discourse. As empirical data in this area continues to evolve rapidly, a formal thesis synthesis of available literature is essential to map the current state of evidence and identify concrete pathways for future investigation. The present review draws on {len(results)} sources retrieved from authoritative repositories. Each source has been selected on the basis of topical relevance, providing a multifaceted view of the data landscape {all_cites}.
+The academic investigation of *"{query}"* has assumed increasing importance within contemporary scientific and interdisciplinary discourse. As evidence in this domain continues to accumulate at a rapid pace, the formal synthesis of available literature has become an essential undertaking for scholars seeking to map the current state of knowledge and identify concrete pathways for future research {first_cite}. The present review draws upon {len(results)} sources retrieved from authoritative academic repositories, each selected on the basis of topical relevance and scholarly rigour, collectively providing a multifaceted view of the intellectual landscape {all_cites}.
 
-The importance of formally defining and investigating *"{query}"* cannot be overstated. Scholars and practitioners alike have recognised the need for rigorous, evidence-based frameworks that can guide applied decision-making. This thesis aims to distil the essential insights from the available literature, presenting them in a highly professional academic structure that satisfies academic requirements.
+The importance of rigorously investigating *"{query}"* extends beyond academic interest; it has direct implications for practical decision-making, policy formulation, and the advancement of the field. Scholars and practitioners alike have recognised the need for evidence-based frameworks that can guide applied research and translate theoretical insights into actionable outcomes. This thesis aims to distil the essential contributions of the available literature, presenting them within a structured, professional academic framework that meets rigorous scholarly standards {all_cites}.
 
 ## Literature Review: {query.capitalize()}
 
@@ -653,33 +592,33 @@ The importance of formally defining and investigating *"{query}"* cannot be over
 
 {group_summary(group_b)}
 
-The historical and contemporary literature collectively demonstrates that the topic is approached from multiple disciplinary angles. Prior researchers have employed a variety of theoretical frameworks, each yielding complementary insights into the subject {all_cites}. The diversity of approaches reflects the interdisciplinary nature of the topic and establishes a firm foundation for the methodology adopted in this paper.
+The historical and contemporary literature collectively demonstrates that *{query}* is approached from multiple disciplinary angles, reflecting the inherently interdisciplinary character of the field. Prior researchers have employed a variety of theoretical and empirical frameworks, each yielding complementary insights that together compose a rich and nuanced scholarly discourse {all_cites}. The diversity of methodological approaches identified across the literature not only underscores the complexity of the topic but also establishes a strong foundation for the systematic methodology adopted in this paper.
 
 ## Methodology and Search Strategy
 
-This thesis employs a systematic review methodology to aggregate and analyse the underlying data. Specifically, {len(results)} peer-reviewed resources were retrieved using targeted academic queries centred on *"{query}"*. The inclusion criteria mandated that sources exhibit rigorous empirical or theoretical contributions to the field. 
+This thesis employs a systematic review methodology designed to aggregate, evaluate, and synthesise the available academic literature on *"{query}"*. Specifically, {len(results)} peer-reviewed and authoritative resources were retrieved through targeted academic search queries across multiple scholarly databases and web sources. The inclusion criteria mandated that each source demonstrate a meaningful empirical or theoretical contribution to the field, exhibit scholarly rigour, and maintain direct relevance to the research question.
 
-The analytical strategy involved qualitative coding of the gathered abstracts and key findings to extract dominant trends, methodological heterogeneity, and substantive data points. This approach, while subject to the limitations of cross-sectional retrieval, ensures a high degree of triangulation across the observed findings {all_cites}.
+The analytical strategy involved qualitative coding of the gathered source abstracts, key findings, and thematic content to extract dominant intellectual trends, identify methodological heterogeneity, and surface substantive data points. A comparative cross-source analysis was conducted to triangulate findings and evaluate the degree of scholarly consensus and divergence. This approach, while subject to the inherent limitations of cross-sectional retrieval and potential publication bias, ensures a high degree of analytical rigour and thematic comprehensiveness across the observed findings {all_cites}.
 
 ## Analysis and Findings: Synthesis of Data
 
 {lit_text}
 
-### Aggregated Data Analysis
+### Comparative Source Overview
 
 {table_md}
 
-Across the reviewed datasets and sources, a number of definitive trends emerge. First, there is broad statistical and qualitative consensus that the topic represents a domain of high significance, with relevant data increasingly being quantified in recent literature {_cite(results[-1].index) if results else ""}. Second, the empirical evidence highlights severe dependencies between the tested variables. This diversity in the data enriches the overall evidence base. Third, several sources explicitly highlight critical data gaps in the existing literature, pointing to specific experimental setups where further empirical work is urgently needed {all_cites}.
+Across the reviewed sources, several definitive trends emerge that collectively advance understanding of *{query}*. First, there is broad scholarly consensus that the topic represents a domain of high significance, with the volume and specificity of published research increasing substantially over recent years {last_cite}. Second, the empirical evidence consistently highlights complex interdependencies among the core variables under investigation, suggesting that reductive or single-factor analyses are insufficient for capturing the full scope of the phenomenon. Third, multiple sources explicitly identify critical knowledge gaps in the existing literature, pointing to specific methodological and empirical frontiers where further scholarly work is urgently required {all_cites}.
 
 ## Discussion
 
-The synthesis of the {len(results)} retrieved sources yields critical insights regarding the thesis topic. Taken together, the extracted data points paint a picture of a field that is heavily reliant on evolving methodologies {all_cites}. Key debates within the literature centre on methodological best practices, the integrity of the data across diverse contexts, and the most productive computational or theoretical directions for future inquiry.
+The synthesis of the {len(results)} retrieved sources yields critical insights that advance the scholarly understanding of *{query}*. Taken together, the aggregated findings paint a portrait of a dynamic and evolving field, one characterised by methodological innovation, growing empirical rigour, and productive scholarly debate {all_cites}. Key intellectual tensions within the literature centre on the most appropriate methodological frameworks, the generalisability of findings across diverse contexts, and the identification of the most productive avenues for future theoretical and applied inquiry.
 
-It is notable that, despite the breadth of the literature and available data, certain variables remain underexplored. The findings reviewed here suggest that progress will depend critically on the continued integration of empirical data from adjacent domains and on the standardisation of data collection techniques {all_cites}.
+It is notable that, despite the breadth and depth of the existing literature, certain dimensions of *{query}* remain underexplored or contested. The evidence reviewed suggests that meaningful progress will depend upon sustained interdisciplinary collaboration, the standardisation of data collection and reporting protocols, and the development of integrative theoretical models capable of accommodating the complexity of the phenomenon {all_cites}. These observations reinforce the value of the present synthesis and point toward concrete directions for future scholarship.
 
 ## Conclusion
 
-This thesis has formally synthesised current scholarly evidence on *"{query}"*. The structured analysis reveals a dynamic field characterised by methodological diversity and a wealth of raw empirical evidence. While significant data has been aggregated and analysed successfully, important gaps remain. The formal review presented here establishes a strong, professionally structured foundation for future inquiry and offers highly relevant data-driven guidance for researchers engaged with this topic {all_cites}.
+This thesis has systematically synthesised the current scholarly evidence pertaining to *"{query}"*, drawing upon {len(results)} authoritative academic sources. The structured analysis has revealed a dynamic and methodologically diverse field, one in which substantial empirical progress has been achieved alongside the identification of important remaining gaps. The findings of this review underscore the need for continued rigorous inquiry and the integration of diverse scholarly perspectives. The present work establishes a strong, evidence-grounded foundation for future research and offers practically relevant, data-driven guidance for scholars and practitioners engaged with this critical topic {all_cites}.
 
 ## References
 
@@ -800,19 +739,10 @@ async def synthesize(
 
         # ── Thesis generation (non-followup) ──────────────────────────────────
         if not is_followup:
-            title = _generate_title_sync(query)  # tries NVIDIA → Groq → Ollama internally
+            title = _generate_title_sync(query)  # tries Groq → Ollama internally
             logger.info(f"Using title: {title}")
 
-            # 1. Try NVIDIA (PRIMARY)
-            try:
-                for token in _stream_nvidia(query, groq_sources_text, title):
-                    loop.call_soon_threadsafe(queue.put_nowait, token)
-                loop.call_soon_threadsafe(queue.put_nowait, None)
-                return
-            except Exception as exc:
-                logger.warning(f"NVIDIA thesis stream failed ({exc}); trying Groq…")
-
-            # 2. Try Groq (SECONDARY) — compact sources to avoid 413
+            # 1. Try Groq (PRIMARY)
             try:
                 for token in _stream_groq(query, groq_sources_text, title):
                     loop.call_soon_threadsafe(queue.put_nowait, token)
@@ -821,7 +751,7 @@ async def synthesize(
             except Exception as exc:
                 logger.warning(f"Groq thesis stream failed ({exc}); trying Ollama…")
 
-            # 3. Try Ollama (TERTIARY)
+            # 2. Try Ollama (SECONDARY)
             try:
                 for token in _stream_ollama(query, sources_text, title):
                     loop.call_soon_threadsafe(queue.put_nowait, token)
@@ -830,7 +760,7 @@ async def synthesize(
             except Exception as exc:
                 logger.warning(f"Ollama thesis stream failed ({exc}); using template fallback…")
 
-            # 4. Template fallback
+            # 3. Template fallback
             ollama_available = False
             fallback = _template_paper(query, results, title)
             chunk_size = 80

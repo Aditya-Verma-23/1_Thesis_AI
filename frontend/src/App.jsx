@@ -14,6 +14,47 @@ import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
 
+// ── Shared thesis markdown renderers ─────────────────────────────────────────
+const thesisComponents = {
+  img: ({ src, alt }) => (
+    <figure className="thesis-figure">
+      <img src={src} alt={alt || 'Figure'} className="thesis-img" />
+      {alt && <figcaption className="thesis-figcaption">{alt}</figcaption>}
+    </figure>
+  ),
+  table: ({ children }) => (
+    <div className="thesis-table-wrapper">
+      <table className="thesis-table">{children}</table>
+    </div>
+  ),
+  th: ({ children }) => <th className="thesis-th">{children}</th>,
+  td: ({ children }) => <td className="thesis-td">{children}</td>,
+  p: ({ children }) => <p className="thesis-p">{children}</p>,
+  h1: ({ children }) => <h1 className="thesis-h1">{children}</h1>,
+  h2: ({ children }) => <h2 className="thesis-h2">{children}</h2>,
+  h3: ({ children }) => <h3 className="thesis-h3">{children}</h3>,
+};
+
+function ThesisMarkdown({ content }) {
+  const processed = (content || '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/^[ \t]+(https?:\/\/)/gm, '$1')
+    .replace(/\[(\d+)\](?!\()/g, '<span class="cite-chip">[$1]</span>');
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      rehypePlugins={[rehypeRaw]}
+      components={thesisComponents}
+      urlTransform={(url) => {
+        if (url.startsWith('data:image/')) return url;
+        return defaultUrlTransform(url);
+      }}
+    >
+      {processed}
+    </ReactMarkdown>
+  );
+}
+
 const BACKEND_URL = 'http://localhost:8888';
 
 const TAB_CONFIG = {
@@ -775,19 +816,7 @@ export default function App() {
                     />
                   ) : (
                     <div className="thesis-doc-content">
-                      <ReactMarkdown
-                        remarkPlugins={[remarkGfm]}
-                        rehypePlugins={[rehypeRaw]}
-                        urlTransform={(url) => {
-                          if (url.startsWith('data:image/')) return url;
-                          return defaultUrlTransform(url);
-                        }}
-                      >
-                        {thesis.content
-                          .replace(/&nbsp;/g, ' ')
-                          .replace(/^[ \t]+(https?:\/\/)/gm, '$1')
-                          .replace(/\[(\d+)\](?!\()/g, '<span class="cite-chip">[$1]</span>')}
-                      </ReactMarkdown>
+                      <ThesisMarkdown content={thesis.content} />
                     </div>
                   )}
                 </div>
@@ -1083,12 +1112,7 @@ export default function App() {
                             )}
                             {msg.content && (
                               <div className="msg-assistant">
-                                <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
-                                  {msg.content
-                                    .replace(/&nbsp;/g, ' ')
-                                    .replace(/^[ \t]+(https?:\/\/)/gm, '$1')
-                                    .replace(/\[(\d+)\](?!\()/g, '<span class="cite-chip">[$1]</span>')}
-                                </ReactMarkdown>
+                                <ThesisMarkdown content={msg.content} />
                               </div>
                             )}
                           </>
