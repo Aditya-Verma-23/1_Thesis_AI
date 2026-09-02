@@ -1873,6 +1873,35 @@ h1.greeting {
   font-size: 13.5px;
   max-width: 92%;
   line-height: 1.6;
+  position: relative; /* For the copy button */
+}
+
+/* Copy button (shows on hover like ChatGPT) */
+.msg-copy-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: transparent;
+  border: none;
+  color: var(--ink-soft);
+  opacity: 0;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.2s ease, background 0.2s ease, color 0.2s ease;
+}
+
+.right-assistant-msg:hover .msg-copy-btn {
+  opacity: 0.6;
+}
+
+.msg-copy-btn:hover {
+  opacity: 1 !important;
+  background: var(--line);
+  color: var(--ink);
 }
 
 
@@ -1883,6 +1912,7 @@ h1.greeting {
   color: var(--maroon, #8b1a2e);
   margin-bottom: 8px;
   padding-bottom: 6px;
+  padding-right: 24px; /* Space for the copy button */
   border-bottom: 1.5px solid var(--pink-tint-2, #f5dde3);
   letter-spacing: 0.01em;
   line-height: 1.4;
