@@ -401,6 +401,7 @@ export default function App() {
           ...p,
           content: data.answer || '',
           results: data.results || [],
+          questionTitle: data.question_title || null,
           sessionId: null  // Don't overwrite thesis session
         }));
         setStage('');
@@ -937,7 +938,17 @@ export default function App() {
                           )}
                           {msg.role === 'assistant' && msg.content && (
                             <div className="right-assistant-msg">
-                              <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>{msg.content}</ReactMarkdown>
+                              {msg.questionTitle && (
+                                <div className="followup-answer-title">{msg.questionTitle}</div>
+                              )}
+                              <ReactMarkdown
+                                remarkPlugins={[remarkGfm]}
+                                rehypePlugins={[rehypeRaw]}
+                                components={{
+                                  ul: ({ children }) => <ol className="followup-ol">{children}</ol>,
+                                  li: ({ children }) => <li className="followup-li">{children}</li>,
+                                }}
+                              >{msg.content}</ReactMarkdown>
                             </div>
                           )}
                         </div>

@@ -1,4 +1,4 @@
-﻿:root {
+:root {
   --maroon: #8f1d3a;
   --maroon-dark: #7a1730;
   --pink-tint: #fdf3f5;
@@ -1836,6 +1836,33 @@ h1.greeting {
   font-size: 13.5px;
   max-width: 92%;
   line-height: 1.6;
+}
+
+
+/* Follow-up answer title (the question repeated as a heading) */
+.followup-answer-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--maroon, #8b1a2e);
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1.5px solid var(--pink-tint-2, #f5dde3);
+  letter-spacing: 0.01em;
+  line-height: 1.4;
+}
+
+/* Numbered list inside follow-up answers */
+.followup-ol {
+  padding-left: 20px;
+  margin: 6px 0 4px 0;
+  counter-reset: item;
+  list-style: decimal;
+}
+
+.followup-li {
+  margin-bottom: 6px;
+  line-height: 1.6;
+  font-size: 13.5px;
 }
 
 /* Right Composer */

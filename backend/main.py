@@ -20,7 +20,7 @@ from loguru import logger
 import session_store
 from models import QueryRequest, SearchResult, StreamEventType, SynthesisResult
 from search import search_papers, search_for_chat
-from synthesizer import synthesize, synthesize_chat, suggest_alternative_topics
+from synthesizer import synthesize, synthesize_chat, suggest_alternative_topics, generate_question_title_sync
 
 
 # ── App lifecycle ──────────────────────────────────────────────────────────────
@@ -195,13 +195,19 @@ async def chat(req: QueryRequest):
         # Get thesis context
         thesis_context = req.thesis_context
 
-        # Synthesize answer (non-streaming)
+        # Synthesize answer (non-streaming) and generate question title concurrently
         answer_parts = []
         async for token in synthesize_chat(req.query, results, thesis_context=thesis_context):
             answer_parts.append(token)
         answer = "".join(answer_parts)
 
-        return {"answer": answer, "results": [r.model_dump() for r in results], "session_id": session_id}
+        # Generate refined title for the question (quick LLM call)
+        loop = asyncio.get_running_loop()
+        question_title = await loop.run_in_executor(
+            None, generate_question_title_sync, req.query
+        )
+
+        return {"answer": answer, "results": [r.model_dump() for r in results], "session_id": session_id, "question_title": question_title}
 
     except Exception as exc:
         logger.exception("Chat endpoint error")

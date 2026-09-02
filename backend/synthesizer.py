@@ -193,7 +193,7 @@ RULES:
 1. Answer the specific question directly. START immediately with the answer — no preamble.
 2. Do NOT begin your response with phrases like "Based on the thesis", "Based on the retrieved sources",
    "Here is what the data shows", "According to the sources", or any similar introductory filler.
-3. Format your response intelligently based on the user's prompt: use bullet points if they ask for a list/points, or use concise paragraphs (2 to 5 max) if they ask for an explanation.
+3. Format your response intelligently based on the user's prompt: use **numbered lists** (1. 2. 3. …) if they ask for a list/points, or use concise paragraphs (2 to 5 max) if they ask for an explanation. NEVER use bullet points (- or *) — always prefer numbered lists.
 4. Use inline citations like [1], [2] when referencing facts from the new sources.
 5. Do NOT include a References section — the UI handles this automatically.
 6. Write in formal, academic English.
@@ -204,6 +204,21 @@ RULES:
 
 
 # ── Title generation (quick non-streaming Ollama call) ────────────────────────
+
+QUESTION_TITLE_PROMPT = """\
+You are a precise editor. The user has asked a follow-up research question in a casual or informal way.
+Rewrite it as a SHORT, precise, well-phrased section heading (NOT a full thesis title).
+
+Rules:
+- Maximum 8 words.
+- Title Case (capitalise major words).
+- Remove filler words like "ok", "now", "please", "can you", "tell me", "provide me".
+- Keep it factual and direct — it should read like a document section heading.
+- Do NOT add a question mark.
+- Do NOT add "Overview of", "A Look at", "Introduction to", or similar filler prefixes.
+- Respond with ONLY the heading text, nothing else.\
+"""
+
 
 def _generate_title_sync(query: str) -> str:
     """Ask Groq (then Ollama) to produce a refined academic title. Falls back to a cleaned query."""
@@ -259,6 +274,68 @@ def _generate_title_sync(query: str) -> str:
     words = query.split()
     short = " ".join(words[:10])
     return short.rstrip("?.!") + ("..." if len(words) > 10 else "")
+
+
+def generate_question_title_sync(question: str) -> str:
+    """Convert a raw follow-up question into a short, precise section heading using the LLM."""
+    backends = [
+        {
+            "url":     GROQ_URL,
+            "headers": {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
+            "payload": {
+                "model":       GROQ_MODEL,
+                "temperature": 0.3,
+                "stream":      False,
+                "messages": [
+                    {"role": "system", "content": QUESTION_TITLE_PROMPT},
+                    {"role": "user",   "content": question},
+                ],
+            },
+            "timeout": 10,
+            "label":   "Groq",
+        },
+        {
+            "url":     OLLAMA_URL,
+            "headers": {},
+            "payload": {
+                "model":       OLLAMA_MODEL,
+                "temperature": 0.3,
+                "stream":      False,
+                "messages": [
+                    {"role": "system", "content": QUESTION_TITLE_PROMPT},
+                    {"role": "user",   "content": question},
+                ],
+            },
+            "timeout": (OLLAMA_CONNECT_TIMEOUT, 10),
+            "label":   "Ollama",
+        },
+    ]
+    for backend in backends:
+        try:
+            resp = requests.post(
+                backend["url"],
+                headers=backend["headers"],
+                json=backend["payload"],
+                timeout=backend["timeout"],
+            )
+            resp.raise_for_status()
+            heading = resp.json()["choices"][0]["message"]["content"].strip().strip('"').strip()
+            heading = heading.lstrip("# ").strip().rstrip("?")
+            logger.info(f"[{backend['label']}] Generated question title: {heading}")
+            return heading
+        except Exception as exc:
+            logger.warning(f"[{backend['label']}] Question title generation failed: {exc}")
+
+    # Fallback: strip filler words and title-case
+    import re
+    cleaned = re.sub(
+        r"^(ok|okay|now|please|can you|could you|tell me|provide me|give me|show me|explain|describe|what is|what are|how does|how do)\s+",
+        "", question.strip(), flags=re.IGNORECASE
+    )
+    words = cleaned.split()
+    return " ".join(words[:8]).rstrip("?.!").title()
+
+
 
 
 # ── Token sanitiser ────────────────────────────────────────────────────────────────
