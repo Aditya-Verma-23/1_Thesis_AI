@@ -55,6 +55,72 @@ function ThesisMarkdown({ content }) {
   );
 }
 
+// ── Flow Diagram Renderer ─────────────────────────────────────────────────────
+function DiagramRenderer({ content }) {
+  const lines = content.split('\n');
+  const segments = []; // alternates: { type:'box', lines:[] } | { type:'arrow' }
+  let currentLines = [];
+
+  for (const raw of lines) {
+    const trimmed = raw.trim();
+    // Arrow separator line
+    if (trimmed === '↓') {
+      if (currentLines.length) { segments.push({ type: 'box', lines: currentLines }); currentLines = []; }
+      segments.push({ type: 'arrow' });
+      continue;
+    }
+    // Box border lines — skip
+    if (trimmed.startsWith('┌') || trimmed.startsWith('└')) continue;
+    // Content lines inside │ … │
+    if (raw.includes('│')) {
+      const inner = raw
+        .replace(/^[^│]*│/, '')   // strip everything up to and including first │
+        .replace(/│[\s]*$/, '')   // strip last │ and trailing spaces
+        .trimEnd();
+      currentLines.push(inner);
+      continue;
+    }
+    // Plain text after the diagram (explanation paragraph)
+    if (trimmed) currentLines.push(raw.trim());
+  }
+  if (currentLines.length) segments.push({ type: 'box', lines: currentLines });
+
+  return (
+    <div className="flow-diagram">
+      {segments.map((seg, i) => {
+        if (seg.type === 'arrow') {
+          return <div key={i} className="flow-arrow"><span>↓</span></div>;
+        }
+        // Separate step title from sub-lines
+        const titleLine = seg.lines[0] || '';
+        const subLines = seg.lines.slice(1);
+        // Detect step number prefix e.g. "1. Step Name"
+        const stepMatch = titleLine.match(/^(\d+\.\s*)(.+)$/);
+        return (
+          <div key={i} className="flow-box">
+            {stepMatch ? (
+              <div className="flow-box-title">
+                <span className="flow-step-num">{stepMatch[1].trim()}</span>
+                <span className="flow-step-label">{stepMatch[2]}</span>
+              </div>
+            ) : (
+              <div className="flow-box-title"><span className="flow-step-label">{titleLine}</span></div>
+            )}
+            {subLines.map((sl, j) => {
+              const t = sl.trim();
+              if (t.startsWith('•')) {
+                return <div key={j} className="flow-bullet">{t}</div>;
+              }
+              if (t) return <div key={j} className="flow-sub">{t}</div>;
+              return null;
+            })}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 const BACKEND_URL = 'http://localhost:8888';
 
 const TAB_CONFIG = {
@@ -164,6 +230,36 @@ export default function App() {
 
   const chatEndRef = useRef(null);
   const contentRef = useRef(null);
+  const [isListening, setIsListening] = useState(false);
+  const recognitionRef = useRef(null);
+
+  // ── Speech-to-text ──────────────────────────────────────────────
+  const toggleListening = useCallback(() => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { alert('Speech recognition is not supported in this browser. Please use Chrome or Edge.'); return; }
+
+    if (isListening) {
+      recognitionRef.current?.stop();
+      setIsListening(false);
+      return;
+    }
+
+    const rec = new SR();
+    rec.lang = 'en-US';
+    rec.continuous = true;
+    rec.interimResults = false;
+    rec.onresult = (e) => {
+      const transcript = Array.from(e.results)
+        .map(r => r[0].transcript)
+        .join(' ');
+      setQuery(prev => (prev ? prev + ' ' : '') + transcript.trim());
+    };
+    rec.onerror = () => { setIsListening(false); };
+    rec.onend = () => { setIsListening(false); };
+    recognitionRef.current = rec;
+    rec.start();
+    setIsListening(true);
+  }, [isListening]);
 
   // ── Resizer drag logic ──────────────────────────────────────────
   const handleResizerMouseDown = useCallback((e) => {
@@ -947,6 +1043,16 @@ export default function App() {
                                 components={{
                                   ul: ({ children }) => <ol className="followup-ol">{children}</ol>,
                                   li: ({ children }) => <li className="followup-li">{children}</li>,
+                                  pre: ({ children }) => <>{children}</>,
+                                  code: ({ inline, children }) => {
+                                    const raw = String(children).trim();
+                                    if (!inline && /^[\s]*[┌│]/.test(raw)) {
+                                      return <DiagramRenderer content={raw} />;
+                                    }
+                                    return inline
+                                      ? <code className="inline-code">{children}</code>
+                                      : <pre className="diagram-block"><code className="diagram-code">{children}</code></pre>;
+                                  },
                                 }}
                               >{msg.content}</ReactMarkdown>
                             </div>
@@ -971,7 +1077,11 @@ export default function App() {
                         setShowScrollDown(false);
                       }}
                       title="Scroll to bottom"
-                    >↓</button>
+                    >
+                      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M3 5.5L8 10.5L13 5.5" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                      </svg>
+                    </button>
                   )}
 
                   {/* Docked follow-up composer — always visible */}
@@ -1029,7 +1139,18 @@ export default function App() {
                         </div>
 
                         {/* Additional tool buttons */}
-                        <button className="icon-btn" title="Attach file">📎</button>
+                        <button
+                          className={`icon-btn mic-btn${isListening ? ' mic-active' : ''}`}
+                          title={isListening ? 'Stop recording' : 'Speak your question'}
+                          onClick={toggleListening}
+                        >
+                          <svg width="14" height="18" viewBox="0 0 14 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <rect x="4" y="1" width="6" height="10" rx="3" fill="currentColor"/>
+                            <path d="M1 9a6 6 0 0012 0" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" fill="none"/>
+                            <line x1="7" y1="15" x2="7" y2="17" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/>
+                            <line x1="4.5" y1="17" x2="9.5" y2="17" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/>
+                          </svg>
+                        </button>
                         <button className="icon-btn" title="Filters" onClick={() => setIsFilterOpen(true)}>⚙</button>
                       </div>
 
@@ -1078,6 +1199,18 @@ export default function App() {
                           <button className={`toolbar-btn ${sources.includes('papers') ? 'selected' : ''}`} onClick={() => toggleSource('papers')}>📄 Papers {sources.includes('papers') ? '✓' : ''}</button>
                           <button className={`toolbar-btn ${sources.includes('web') ? 'selected' : ''}`} onClick={() => toggleSource('web')}>🌐 Internet {sources.includes('web') ? '✓' : ''}</button>
                           <button className="toolbar-btn" onClick={() => setIsFilterOpen(true)}>⚙ Filters</button>
+                          <button
+                            className={`icon-btn mic-btn${isListening ? ' mic-active' : ''}`}
+                            title={isListening ? 'Stop recording' : 'Speak your question'}
+                            onClick={toggleListening}
+                          >
+                            <svg width="14" height="18" viewBox="0 0 14 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+                              <rect x="4" y="1" width="6" height="10" rx="3" fill="currentColor"/>
+                              <path d="M1 9a6 6 0 0012 0" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" fill="none"/>
+                              <line x1="7" y1="15" x2="7" y2="17" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/>
+                              <line x1="4.5" y1="17" x2="9.5" y2="17" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/>
+                            </svg>
+                          </button>
                         </div>
                         <div className="toolbar-right">
                           <button id="sendBtn" className="send-btn" onClick={() => submitQuery(query)} disabled={isLoading || !query.trim()}>↑</button>
@@ -1144,6 +1277,18 @@ export default function App() {
                           <button className={`toolbar-btn ${sources.includes('papers') ? 'selected' : ''}`} onClick={() => toggleSource('papers')}>📄 Papers {sources.includes('papers') ? '✓' : ''}</button>
                           <button className={`toolbar-btn ${sources.includes('web') ? 'selected' : ''}`} onClick={() => toggleSource('web')}>🌐 Internet {sources.includes('web') ? '✓' : ''}</button>
                           <button className="toolbar-btn" onClick={() => setIsFilterOpen(true)}>⚙ Filters</button>
+                          <button
+                            className={`icon-btn mic-btn${isListening ? ' mic-active' : ''}`}
+                            title={isListening ? 'Stop recording' : 'Speak your question'}
+                            onClick={toggleListening}
+                          >
+                            <svg width="14" height="18" viewBox="0 0 14 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+                              <rect x="4" y="1" width="6" height="10" rx="3" fill="currentColor"/>
+                              <path d="M1 9a6 6 0 0012 0" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" fill="none"/>
+                              <line x1="7" y1="15" x2="7" y2="17" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/>
+                              <line x1="4.5" y1="17" x2="9.5" y2="17" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/>
+                            </svg>
+                          </button>
                         </div>
                         <div className="toolbar-right">
                           <button id="dockedSendBtn" className="send-btn" onClick={() => submitQuery(query)} disabled={isLoading || !query.trim()}>↑</button>

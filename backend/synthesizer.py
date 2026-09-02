@@ -193,14 +193,84 @@ RULES:
 1. Answer the specific question directly. START immediately with the answer — no preamble.
 2. Do NOT begin your response with phrases like "Based on the thesis", "Based on the retrieved sources",
    "Here is what the data shows", "According to the sources", or any similar introductory filler.
-3. Format your response intelligently based on the user's prompt: use **numbered lists** (1. 2. 3. …) if they ask for a list/points, or use concise paragraphs (2 to 5 max) if they ask for an explanation. NEVER use bullet points (- or *) — always prefer numbered lists.
+3. Format your response intelligently based on the user's prompt: use **numbered lists** (1. 2. 3. …) if they ask for a list/points, use concise paragraphs (2 to 5 max) if they ask for an explanation, or use the ASCII diagram format (see Rule 10) if they ask for a flow/diagram/structure/process/pipeline/workflow.  NEVER use bullet points (- or *) — always prefer numbered lists or diagrams.
 4. Use inline citations like [1], [2] when referencing facts from the new sources.
 5. Do NOT include a References section — the UI handles this automatically.
 6. Write in formal, academic English.
 7. Interpret vague pronouns (e.g., "it", "that", "this", "they") in the user's question as referring to the main topic of the THESIS CONTEXT.
 8. Actively use the THESIS CONTEXT to answer the question. If the NEW SOURCES are irrelevant to the question, ignore them and rely entirely on the THESIS CONTEXT.
 9. ONLY answer questions that are directly related to the main topic of the THESIS CONTEXT. If the user asks a question that is unrelated to the thesis topic, DO NOT answer it. Instead, reply politely saying: "This question does not appear to be related to the current research topic. Please ask a question related to the thesis."
+10. DIAGRAM RULE — MANDATORY AND STRICT: If the user asks for a flow, diagram, structure, process, pipeline, workflow, steps, or any visual representation, you MUST produce an ASCII box diagram using ONLY a strict TOP-TO-BOTTOM VERTICAL layout. Wrap the entire diagram in triple backticks.
+
+ABSOLUTE CONSTRAINTS — violating any of these is forbidden:
+  ✗ NO horizontal arrows (→ or -->) between boxes on the same row.
+  ✗ NO side-by-side columns or multi-column layouts.
+  ✗ NO diagonal connections.
+  ✗ NO boxes placed next to each other on the same line.
+  ✓ ONLY one box per row, stacked vertically, connected by a centred ↓.
+
+BOX CONSTRUCTION — copy this structure exactly:
+  ┌──────────────────────────┐
+  │ N. Step Title            │
+  │    Optional detail line  │
+  │  • Branch option A       │
+  │  • Branch option B       │
+  └──────────────┬───────────┘
+                 ↓
+
+  Where:
+  - Top edge:    ┌ then ── repeated to fill width then ┐
+  - Side edges:  │ space content space-padded to width │
+  - Bottom+stem: └ then ── repeated then ┬ then ── then ┘  (all non-final boxes)
+  - Last bottom: └ then ── repeated to fill width then ┘   (final box, no ↓)
+  - Arrow:       spaces to centre the ↓ under the ┬, then ↓ on its own line
+
+WORKED EXAMPLE (copy this exact style):
+```
+┌──────────────────────────┐
+│ 1. Design gRNA           │
+│    Target the DNA locus  │
+└──────────────┬───────────┘
+               ↓
+┌──────────────────────────┐
+│ 2. Assemble Cas9 Complex │
+│    Cas9 protein + gRNA   │
+└──────────────┬───────────┘
+               ↓
+┌──────────────────────────┐
+│ 3. Deliver to Cell       │
+│  • Viral vector          │
+│  • Electroporation       │
+│  • Lipid nanoparticle    │
+└──────────────┬───────────┘
+               ↓
+┌──────────────────────────┐
+│ 4. PAM Recognition &     │
+│    DNA Binding           │
+└──────────────┬───────────┘
+               ↓
+┌──────────────────────────┐
+│ 5. Cas9 Cuts DNA         │
+│    Double-strand break   │
+└──────────────┬───────────┘
+               ↓
+┌──────────────────────────┐
+│ 6. DNA Repair            │
+│  • NHEJ → gene knockout  │
+│  • HDR → precise edit    │
+└──────────────┬───────────┘
+               ↓
+┌──────────────────────────┐
+│ 7. Screen & Validate     │
+│    Sequencing & analysis │
+└──────────────────────────┘
+```
+
+After the diagram, add 2–3 sentences of plain-text academic explanation.
+NEVER use a numbered list, bullet list, or paragraph alone when a diagram is requested.
 """
+
+
 
 
 # ── Title generation (quick non-streaming Ollama call) ────────────────────────
@@ -210,7 +280,7 @@ You are a precise editor. The user has asked a follow-up research question in a 
 Rewrite it as a SHORT, precise, well-phrased section heading (NOT a full thesis title).
 
 Rules:
-- Maximum 8 words.
+- Maximum 20 words.
 - Title Case (capitalise major words).
 - Remove filler words like "ok", "now", "please", "can you", "tell me", "provide me".
 - Keep it factual and direct — it should read like a document section heading.
