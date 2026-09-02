@@ -1043,7 +1043,7 @@ export default function App() {
                             <div className="right-assistant-msg">
                               <button
                                 className="msg-copy-btn"
-                                onClick={() => handleCopy(msg.content, idx)}
+                                onClick={() => handleCopy(msg.questionTitle ? `${msg.questionTitle}\n\n${msg.content}` : msg.content, idx)}
                                 title="Copy message"
                               >
                                 {copiedIndex === idx ? (
