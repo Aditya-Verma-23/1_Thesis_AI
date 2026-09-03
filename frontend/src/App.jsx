@@ -446,7 +446,7 @@ export default function App() {
     setChatStarted(true);
     setIsLoading(true);
     setQuery('');
-    setStage('Connecting to backend…');
+    setStage('Searching...');
 
     setMessages(prev => [
       ...prev,
@@ -485,6 +485,7 @@ export default function App() {
           is_followup: isFollowUp,
           thesis_context: thesisContext,
           original_query: isFollowUp ? activeChat : null,
+          chat_history: isFollowUp ? messages.map(m => ({ role: m.role, content: m.content })) : null,
         }),
       });
 

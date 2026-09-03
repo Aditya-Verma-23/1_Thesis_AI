@@ -142,7 +142,7 @@ async def query(req: QueryRequest):
                 yield _sse(StreamEventType.STAGE, {"message": msg})
                 
                 paper_text = ""
-                async for token in synthesize_chat(req.query, results, thesis_context=req.thesis_context):
+                async for token in synthesize_chat(req.query, results, thesis_context=req.thesis_context, chat_history=req.chat_history):
                     paper_text += token
                     yield _sse(StreamEventType.TOKEN, {"content": token})
             else:
@@ -197,7 +197,7 @@ async def chat(req: QueryRequest):
 
         # Synthesize answer (non-streaming) and generate question title concurrently
         answer_parts = []
-        async for token in synthesize_chat(req.query, results, thesis_context=thesis_context):
+        async for token in synthesize_chat(req.query, results, thesis_context=thesis_context, chat_history=req.chat_history):
             answer_parts.append(token)
         answer = "".join(answer_parts)
 

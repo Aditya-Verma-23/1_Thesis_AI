@@ -528,18 +528,31 @@ def _stream_groq(query: str, sources_text: str, title: str):
                 continue
 
 def _build_chat_messages(query: str, sources_text: str, thesis_context: str | None,
-                         thesis_max_chars: int = 10_000) -> tuple[list, str]:
+                         thesis_max_chars: int = 10_000, chat_history: list[dict] | None = None) -> tuple[list, str]:
     """Build the messages list and user_msg for chat follow-up queries."""
     thesis_block = ""
     if thesis_context:
         truncated = thesis_context[:thesis_max_chars]
         thesis_block = f"\n\n=== THESIS CONTEXT (the generated paper) ===\n{truncated}\n=== END THESIS CONTEXT ==="
 
+    history_block = ""
+    if chat_history:
+        history_lines = []
+        for msg in chat_history[-6:]:  # Only take last 6 messages to save context limit
+            role = msg.get("role", "user").capitalize()
+            content = msg.get("content", "").strip()
+            if content:
+                history_lines.append(f"{role}: {content}")
+        if history_lines:
+            history_text = "\n".join(history_lines)
+            history_block = f"\n\n=== PREVIOUS CHAT HISTORY ===\n{history_text}\n=== END CHAT HISTORY ==="
+
     user_msg = (
-        f"CRITICAL INSTRUCTION: First, scan the THESIS CONTEXT below. Evaluate if the question '{query}' is related to the main topic of the THESIS CONTEXT.\n"
-        f"If the question is completely unrelated to the thesis topic (e.g. asking about unrelated people, random facts, or general chit-chat), you MUST NOT answer it. "
+        f"CRITICAL INSTRUCTION: First, scan the THESIS CONTEXT and PREVIOUS CHAT HISTORY below. Evaluate if the question '{query}' is related to the main topic of the THESIS CONTEXT or follows up on the PREVIOUS CHAT HISTORY.\n"
+        f"If the question is completely unrelated to the thesis topic and the ongoing conversation (e.g. asking about unrelated people, random facts, or general chit-chat), you MUST NOT answer it. "
         f"Instead, reply EXACTLY with: 'This question does not appear to be related to the current research topic. Please ask a question related to the thesis.'\n\n"
         f"User question: {query}"
+        f"{history_block}"
         f"{thesis_block}\n\n"
         f"=== NEW SOURCES RETRIEVED FOR THIS QUESTION ===\n{sources_text}"
     )
@@ -550,9 +563,9 @@ def _build_chat_messages(query: str, sources_text: str, thesis_context: str | No
     return messages, user_msg
 
 
-def _stream_chat_ollama(query: str, sources_text: str, thesis_context: str | None):
+def _stream_chat_ollama(query: str, sources_text: str, thesis_context: str | None, chat_history: list[dict] | None = None):
     """Streaming chat via local Ollama."""
-    messages, _ = _build_chat_messages(query, sources_text, thesis_context)
+    messages, _ = _build_chat_messages(query, sources_text, thesis_context, chat_history=chat_history)
     payload = {
         "model":       OLLAMA_MODEL,
         "temperature": 0.4,
@@ -582,13 +595,14 @@ def _stream_chat_ollama(query: str, sources_text: str, thesis_context: str | Non
                 continue
 
 
-def _stream_chat_groq(query: str, sources_text: str, thesis_context: str | None):
+def _stream_chat_groq(query: str, sources_text: str, thesis_context: str | None, chat_history: list[dict] | None = None):
     """Streaming chat via Groq cloud API (PRIMARY).
     Uses smaller thesis context (4 000 chars) and Groq-formatted sources to avoid 413 errors.
     """
     messages, _ = _build_chat_messages(
         query, sources_text, thesis_context,
         thesis_max_chars=4_000,
+        chat_history=chat_history,
     )
     payload = {
         "model":       GROQ_MODEL,
@@ -927,6 +941,7 @@ async def synthesize_chat(
     query: str,
     results: list[SearchResult],
     thesis_context: str | None = None,
+    chat_history: list[dict] | None = None,
 ) -> AsyncIterator[str]:
     """Yield chat tokens for follow-up questions."""
     sources_text      = _format_sources(results)
@@ -938,7 +953,7 @@ async def synthesize_chat(
     def producer():
         # 1. Try Groq (PRIMARY for chat)
         try:
-            for token in _stream_chat_groq(query, groq_sources_text, thesis_context):
+            for token in _stream_chat_groq(query, groq_sources_text, thesis_context, chat_history=chat_history):
                 loop.call_soon_threadsafe(queue.put_nowait, token)
             loop.call_soon_threadsafe(queue.put_nowait, None)
             return
@@ -947,7 +962,7 @@ async def synthesize_chat(
 
         # 2. Try Ollama (SECONDARY)
         try:
-            for token in _stream_chat_ollama(query, sources_text, thesis_context):
+            for token in _stream_chat_ollama(query, sources_text, thesis_context, chat_history=chat_history):
                 loop.call_soon_threadsafe(queue.put_nowait, token)
             loop.call_soon_threadsafe(queue.put_nowait, None)
             return

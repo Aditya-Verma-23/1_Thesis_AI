@@ -14,6 +14,7 @@ class QueryRequest(BaseModel):
     is_followup: bool = False
     thesis_context: str | None = None  # the current thesis text for follow-up chats
     original_query: str | None = None  # the original thesis topic for follow-up context
+    chat_history: list[dict] | None = None  # previous chat messages for follow-up context
 
 
 class SearchResult(BaseModel):
